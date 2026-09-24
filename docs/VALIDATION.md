@@ -18,6 +18,8 @@ The backend source is official Keybase revision
   preview policy, separate storage/Keychain names, inert constructor services,
   text-only mobile provisioning without a temporary QR image, and rejection by
   the removed image-processing functions before input is read or rendered.
+  Constructor checks also verify that the optional follower-list worker is
+  absent and its login startup and request paths remain disabled.
 - The synthetic service-wiring test exercises the actual blocking thread loader
   against a supplied conversation source. It verifies a message and page token
   survive, both read-marking settings are preserved, source errors propagate,

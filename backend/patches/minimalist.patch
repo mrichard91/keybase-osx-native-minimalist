@@ -1746,8 +1746,22 @@ index 0000000000000000000000000000000000000000..b51dd378f8214de0db02512bd37233bf
 +		t.Fatal("Keychain namespace is not isolated")
 +	}
 +}
+diff --git a/go/service/config.go b/go/service/config.go
+index fb749c50be146cb432d274aaf3edd4030a7dd53c..fee7e7b1999adffb31a069d4bdddd78b9a2aae62 100644
+--- a/go/service/config.go
++++ b/go/service/config.go
+@@ -378,6 +378,9 @@ func (h ConfigHandler) GetBootstrapStatus(ctx context.Context, sessionID int) (r
+ }
+ 
+ func (h ConfigHandler) RequestFollowingAndUnverifiedFollowers(ctx context.Context, sessionID int) error {
++	if libkb.IsMinimalistBuild {
++		return errMinimalistDisabled
++	}
+ 	if err := assertLoggedIn(ctx, h.G()); err != nil {
+ 		return err
+ 	}
 diff --git a/go/service/main.go b/go/service/main.go
-index ae3b46e07e6d31df10edb2694db18f9105ede461..8958aa6c0cde5cd2e2d958bd91192cc09f744bba 100644
+index ae3b46e07e6d31df10edb2694db18f9105ede461..6ff5dce37c85e119b32a5c3757472ef67605831e 100644
 --- a/go/service/main.go
 +++ b/go/service/main.go
 @@ -97,7 +97,7 @@ type Shutdowner interface {
@@ -1759,17 +1773,20 @@ index ae3b46e07e6d31df10edb2694db18f9105ede461..8958aa6c0cde5cd2e2d958bd91192cc0
  		Contextified:     libkb.NewContextified(g),
  		ChatContextified: chatG,
  		isDaemon:         isDaemon,
-@@ -111,10 +111,15 @@ func NewService(g *libkb.GlobalContext, isDaemon bool) *Service {
+@@ -109,12 +109,17 @@ func NewService(g *libkb.GlobalContext, isDaemon bool) *Service {
+ 		gregor:           newGregorHandler(allG),
+ 		home:             home.NewHome(g),
  		tlfUpgrader:      tlfupgrade.NewBackgroundTLFUpdater(g),
- 		trackerLoader:    NewTrackerLoader(g),
+-		trackerLoader:    NewTrackerLoader(g),
  		teamUpgrader:     teams.NewUpgrader(),
 -		walletState:      stellar.NewWalletState(g, remote.NewRemoteNet(g)),
  		offlineRPCCache:  offline.NewRPCCache(g),
 -		httpSrv:          manager.NewSrv(g),
  	}
-+	// These constructors start workers and a loopback HTTP listener. The
-+	// minimalist service has no wallet or media endpoints that need them.
++	// The minimalist service has no wallet, media or follower-list endpoints
++	// that need these workers, shutdown hooks or loopback HTTP listener.
 +	if !libkb.IsMinimalistBuild {
++		svc.trackerLoader = NewTrackerLoader(g)
 +		svc.walletState = stellar.NewWalletState(g, remote.NewRemoteNet(g))
 +		svc.httpSrv = manager.NewSrv(g)
 +	}
@@ -1860,7 +1877,17 @@ index ae3b46e07e6d31df10edb2694db18f9105ede461..8958aa6c0cde5cd2e2d958bd91192cc0
  	g := globals.NewContext(d.G(), d.ChatG())
  	if ri == nil {
  		ri = d.gregor.GetClient
-@@ -628,21 +655,27 @@ func (d *Service) startupGregor() {
+@@ -575,6 +602,9 @@ func (d *Service) runTLFUpgrade() {
+ }
+ 
+ func (d *Service) runTrackerLoader(ctx context.Context) {
++	if libkb.IsMinimalistBuild {
++		return
++	}
+ 	d.trackerLoader.Run(ctx)
+ }
+ 
+@@ -628,21 +658,27 @@ func (d *Service) startupGregor() {
  
  		// Add default handlers
  		userHandler := newUserHandler(d.G())
@@ -2164,10 +2191,10 @@ index 0000000000000000000000000000000000000000..d18ee244fcd834e55147620ad6b6de6b
 +}
 diff --git a/go/service/minimalist_test.go b/go/service/minimalist_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..213f57a929c83c9c31d84d694295f38053dd8b8a
+index 0000000000000000000000000000000000000000..b958a88b841be98ccd1996cf062f9ef44758dfc6
 --- /dev/null
 +++ b/go/service/minimalist_test.go
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,194 @@
 +//go:build minimalist
 +
 +package service
@@ -2187,12 +2214,18 @@ index 0000000000000000000000000000000000000000..213f57a929c83c9c31d84d694295f380
 +	"github.com/keybase/go-framed-msgpack-rpc/rpc"
 +)
 +
-+func TestMinimalistConstructorDoesNotStartMediaOrWalletServices(t *testing.T) {
++func TestMinimalistConstructorOmitsOptionalServices(t *testing.T) {
 +	tc := libkb.SetupTest(t, "minimalist-constructor", 1)
 +	defer tc.Cleanup()
 +	svc := NewService(tc.G, false)
-+	if svc.httpSrv != nil || svc.walletState != nil {
-+		t.Fatal("minimalist constructor initialized an HTTP listener or wallet worker")
++	if svc.httpSrv != nil || svc.walletState != nil || svc.trackerLoader != nil {
++		t.Fatal("minimalist constructor initialized an HTTP listener, wallet or follower-list worker")
++	}
++	// Login also invokes this path. With the optional loader absent it must
++	// return without starting a goroutine or dereferencing the omitted worker.
++	svc.runTrackerLoader(context.Background())
++	if err := (ConfigHandler{}).RequestFollowingAndUnverifiedFollowers(context.Background(), 0); !errors.Is(err, errMinimalistDisabled) {
++		t.Fatalf("follower-list requests must reject before account or worker access: %v", err)
 +	}
 +}
 +
@@ -2261,7 +2294,7 @@ index 0000000000000000000000000000000000000000..213f57a929c83c9c31d84d694295f380
 +		if !ok || len(protocol.Methods) != count {
 +			t.Errorf("unexpected protocol surface %s: %d", protocol.Name, len(protocol.Methods))
 +		}
-+		for _, forbidden := range []string{"uploadUserAvatar", "accountDelete", "deprovision", "deviceAdd", "perfLogPoint"} {
++		for _, forbidden := range []string{"uploadUserAvatar", "accountDelete", "deprovision", "deviceAdd", "perfLogPoint", "requestFollowingAndUnverifiedFollowers"} {
 +			if _, found := protocol.Methods[forbidden]; found {
 +				t.Errorf("exposed %s.%s", protocol.Name, forbidden)
 +			}

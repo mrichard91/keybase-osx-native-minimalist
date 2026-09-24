@@ -44,6 +44,8 @@ The app is not App Sandbox isolated; hardened runtime alone is not a sandbox.
 - Optional background components use inert implementations. Previews always
   report NEVER and cannot be enabled through settings. This does not write the
   account's shared preview preference.
+- The optional follower-list tracker loader is omitted from service construction
+  and cannot start through the login hook. Required identity and key checks remain.
 - Thread reads use the official blocking loader and verified conversation source,
   preserving pagination, read-marking requests and source errors. The optional
   predecoded-remote shortcut and nonblocking rich UI loader are disabled.
@@ -64,8 +66,12 @@ and message-chain verification. Not every unused pure-Go dependency has been
 removed. Official networking, caches, key storage, and key-maintenance operations
 remain. The standard-library JPEG decoder is still linked through the official
 OpenPGP packet package's photo-encoding helper; that dependency has not been
-modified. Parser exclusions do not change signed-packet parsing or cryptography.
-The local RPC account interfaces retain official login/provisioning
+modified. Review of the selected production source found no current caller of the
+photo helper or image/JPEG decoders in retained application or third-party code.
+OpenPGP user attributes remain opaque bytes during parsing and serialization.
+This is not a proof that the linked decoder is unreachable under every condition
+or future change. Parser exclusions do not change signed-packet parsing or
+cryptography. The local RPC account interfaces retain official login/provisioning
 behavior through narrow entry points; their internal engines remain substantial. See
 [backend minimization](docs/BACKEND-MINIMIZATION.md) for exact changes and limits.
 

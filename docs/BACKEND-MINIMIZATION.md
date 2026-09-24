@@ -77,10 +77,12 @@ running full service would bypass these backend guarantees. Existing account
 credentials must not be copied into that profile: the official provisioning
 flow establishes the device.
 
-The constructor also omits the optional loopback HTTP manager and wallet worker.
+The constructor also omits the optional loopback HTTP manager, wallet worker and
+follower-list tracker loader. The tracker startup path is disabled at login as
+well, so a successful account login cannot start that omitted worker.
 Mobile-device provisioning displays the official text phrase while skipping QR
 encoding, Unicode terminal graphics and the upstream temporary QR PNG file.
-Focused tests cover both omissions; required account and key engines remain.
+Focused tests cover these omissions; required account and key engines remain.
 
 ## Parser exclusions
 
@@ -104,10 +106,18 @@ inventory of parsers or transitive system dependencies.
 
 JPEG remains. The official `go-crypto/openpgp/packet` package imports `image/jpeg`
 for `NewUserAttributePhoto`, a photo-encoding helper. That import retains JPEG's
-decoder-registration initializer even though this client does not call the photo
-constructor. The crypto dependency is unchanged; removing this final image
-decoder would require a separately reviewed dependency change. Other retained
-protocol and general-purpose parsers still need review.
+decoder-registration initializer. Review of the source files selected by
+`production,minimalist` found no current caller of the photo constructor or the
+image/JPEG decoders in retained application or third-party code. OpenPGP user
+attribute parsing and serialization handle opaque bytes; they do not decode the
+embedded photo. This distinguishes retained decoder code from an identified
+untrusted-image decoding path. It is source-level evidence, not a proof of total
+unreachability or protection from future call paths.
+
+The crypto dependency remains unchanged for this acceptance build. Removing JPEG
+would require a separately reviewed dependency change and reproducible provenance
+for that patched dependency. Other retained protocol and general-purpose parsers
+still need review.
 
 ## Verification and remaining work
 
