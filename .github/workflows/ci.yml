@@ -1,0 +1,16 @@
+name: macOS checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Test the protocol and security boundaries
+        run: bash scripts/test.sh
+      - name: Build and verify the native application
+        run: bash scripts/build-app.sh
