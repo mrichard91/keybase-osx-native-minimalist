@@ -44,12 +44,17 @@ The app is not App Sandbox isolated; hardened runtime alone is not a sandbox.
 - Optional background components use inert implementations. Previews always
   report NEVER and cannot be enabled through settings. This does not write the
   account's shared preview preference.
-- Native media preview implementations and the preview image/GIF/ICO decoder
-  source are excluded from the minimalist build. Tests reject preview requests
-  before consuming their input.
+- Thread reads use the official blocking loader and verified conversation source,
+  preserving pagination, read-marking requests and source errors. The optional
+  predecoded-remote shortcut and nonblocking rich UI loader are disabled.
+- Native media preview implementations and image-processing functions for custom
+  emoji, GIF conversion, audio waveforms, avatars, maps and coin-flip graphics are
+  excluded from the minimalist build. Their substitutes never read image input
+  or generate an image. GIF, PNG, TIFF and CR2 decoder packages
+  and initialization symbols are absent from the rebuilt backend.
 - Password and paper-key responses use the official CLI's interactive terminal
-  flow, with masked input when terminal echo is disabled. App and CLI process
-  memory are not guaranteed to be securely erased.
+  flow. Account responses always use a masked input field, and terminal echo is
+  suppressed. App and CLI process memory are not guaranteed to be securely erased.
 
 ## Remaining surface and acceptance
 
@@ -57,7 +62,10 @@ The backend still parses official encrypted protocol and typed message metadata,
 including metadata for unsupported attachment kinds, to preserve authentication
 and message-chain verification. Not every unused pure-Go dependency has been
 removed. Official networking, caches, key storage, and key-maintenance operations
-remain. The local RPC account interfaces retain official login/provisioning
+remain. The standard-library JPEG decoder is still linked through the official
+OpenPGP packet package's photo-encoding helper; that dependency has not been
+modified. Parser exclusions do not change signed-packet parsing or cryptography.
+The local RPC account interfaces retain official login/provisioning
 behavior through narrow entry points; their internal engines remain substantial. See
 [backend minimization](docs/BACKEND-MINIMIZATION.md) for exact changes and limits.
 

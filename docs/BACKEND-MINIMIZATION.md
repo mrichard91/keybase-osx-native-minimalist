@@ -59,6 +59,16 @@ calls several of these interfaces. Some official dummy methods report empty
 success, so denying unsupported RPC methods before argument decoding is also
 necessary.
 
+Thread reading is an exception to substituting dummy components. The official
+dummy thread loader returns an empty result, which would make the CLI thread API
+silently show no messages. The minimalist service now wraps the official
+blocking `UIThreadLoader.Load`, preserving its verified `ConvSource.Pull` path,
+pagination, read-marking query, errors and connection state. It rejects the
+optional predecoded-remote shortcut and `LoadNonblock`, which belong to rich UI
+loading. A synthetic service-wiring test checks a returned message and page token,
+both read-marking settings, error propagation, offline/reconnect state and early
+rejection of those disabled paths.
+
 The minimal unfurler reports mode NEVER and rejects attempts to enable another
 mode. It does not write the full service's shared account preference. Account
 configuration, socket/runtime paths, cache and Keychain service identifiers are
@@ -72,24 +82,52 @@ Mobile-device provisioning displays the official text phrase while skipping QR
 encoding, Unicode terminal graphics and the upstream temporary QR PNG file.
 Focused tests cover both omissions; required account and key engines remain.
 
+## Parser exclusions
+
+Image-specific implementations are separated into `!minimalist` files, with
+disabled substitutes under `minimalist`. The normal-build implementations retain
+their original function bodies. The exclusions cover custom emoji file
+validation, GIF-to-PNG conversion, audio waveform previews, coin-flip graphics,
+bordered avatars and map decoration. Substitutes reject image operations before
+opening, reading or rendering input; the coin-flip visualizer produces no image
+and clears any existing visualization fields.
+
+Removing the custom emoji decoder import also removes the retained
+`camlistore.org/pkg/images` chain, including `nf/cr2`, TIFF, EXIF and fastjpeg.
+The production dependency graph and binary-symbol inspection confirm that GIF,
+PNG, TIFF and CR2 decoders and their initialization functions are absent. This
+requires file-level import separation: a disabled call alone can still retain a
+Go package's decoder-registration initializer. The build's surface checker also
+enforces the named image-package exclusions against bounded native symbol output
+and explicitly records retained JPEG. This is a regression check, not a complete
+inventory of parsers or transitive system dependencies.
+
+JPEG remains. The official `go-crypto/openpgp/packet` package imports `image/jpeg`
+for `NewUserAttributePhoto`, a photo-encoding helper. That import retains JPEG's
+decoder-registration initializer even though this client does not call the photo
+constructor. The crypto dependency is unchanged; removing this final image
+decoder would require a separately reviewed dependency change. Other retained
+protocol and general-purpose parsers still need review.
+
 ## Verification and remaining work
 
 `TestMinimalist*` tests in the patched `go/chat` package cover the strict text
 boundary, typed metadata and privacy checks, early rejection before callbacks,
 old-outbox rejection, preserved conversation initialization, emoji-source
-bypass, and no-op incoming decoration. These tests need no login, account
-mutation or message sending.
+bypass, no-op incoming decoration, and rejection by image-processing substitutes.
+Service tests also cover the actual blocking thread-loader wiring. These tests
+need no login, account mutation or message sending.
 
 Run the policy tests and production build with `bash scripts/test-backend.sh`.
 The existing upstream chat tests import `externalstest`, which is excluded by
 the production build tag. Build the actual executable separately with
 `go build -tags 'production minimalist' ./keybase` to verify production code.
 
-The first backend patch gates execution and removes selected native media
-helpers. It does not by itself prove that all unused Go dependencies disappear
-from the resulting executable. Imports, initialization functions and retained
-RPC implementations require a separate linked-binary review and further
-build-tag file separation.
+The parser exclusions above are verified for the rebuilt helper, not a claim
+that every unused dependency has disappeared. Imports, initialization functions
+and retained RPC implementations still require review. The dated
+[validation record](VALIDATION.md) distinguishes rebuilt-helper checks from
+earlier packaged-app checks and pending live acceptance.
 
 Incoming encrypted messages still use official typed protocol decoding,
 including attachment metadata. Media is not fetched or rendered by those gates,

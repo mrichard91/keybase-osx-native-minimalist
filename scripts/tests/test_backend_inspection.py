@@ -76,6 +76,33 @@ class SurfaceTests(unittest.TestCase):
             with self.subTest(data=data), self.assertRaises(surface.SurfaceError):
                 surface.parse_go_metadata(data)
 
+    def symbols(self, *symbols):
+        return ("_main.main t 1000 0\n_runtime.main t 2000 0\n" + "\n".join(symbols)).encode()
+
+    def test_retained_jpeg_is_honestly_reported(self):
+        result = surface.check_go_image_symbols(self.symbols("_image/jpeg.(*decoder).decode t 3000 0"))
+        self.assertEqual(result["retainedImagePackages"], ["image/jpeg"])
+        self.assertEqual(result["symbolCount"], 3)
+
+    def test_forbidden_decoder_function_init_data_and_type_symbols(self):
+        for package in surface.FORBIDDEN_GO_IMAGE_PACKAGES:
+            for symbol in (f"_{package}.Decode t 3000 0", f"_{package}..inittask s 3000 0",
+                           f"_type:.eq.{package}.decoder t 3000 0", f"_{package}/internal.table d 3000 0"):
+                with self.subTest(symbol=symbol), self.assertRaisesRegex(surface.SurfaceError, "Forbidden Go image"):
+                    surface.check_go_image_symbols(self.symbols(symbol))
+
+    def test_symbol_matching_respects_package_boundaries(self):
+        result = surface.check_go_image_symbols(self.symbols(
+            "_example.org/image/png.Decode t 3000 0", "_image/pngwriter.Encode t 4000 0",
+            "_github.com/rwcarlsen/goexifreplacement.Decode t 5000 0"))
+        self.assertEqual(result["retainedImagePackages"], [])
+
+    def test_stripped_or_malformed_symbols_fail_closed(self):
+        for data in (b"", b"_CFStringCreate U 0 0\n", b"_main.main s 1000 0\n_runtime.main t 2000 0\n",
+                     self.symbols("invalid record"), self.symbols() + b"\xff"):
+            with self.subTest(data=data), self.assertRaises(surface.SurfaceError):
+                surface.check_go_image_symbols(data)
+
     def run_inert(self, code, **limits):
         return surface.bounded_run([sys.executable, "-c", code], environment={"PATH": "/usr/bin:/bin"},
                                    label="Inert fixture", **limits)

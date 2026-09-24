@@ -16,8 +16,10 @@ be described as a proven replacement for the Electron app.
   encryption, team-key, and chat protocol implementations from a pinned revision.
 - A compile-time backend policy limiting chat to private ASCII text. Attachment
   handling, link unfurls, custom emoji harvesting, commands, payments, location,
-  bots, search indexing, and rich notifications are disabled. Apple audio/video
-  and image-preview frameworks are absent from the built backend.
+  bots, search indexing, and rich notifications are disabled. The rebuilt backend
+  does not link directly to AVFoundation, AVFAudio, CoreMedia, ImageIO, QuickLook,
+  AppKit or WebKit. GIF, PNG, TIFF and CR2 Go decoder packages are absent; JPEG
+  remains through official OpenPGP code.
 - A separate local profile and Keychain namespace. The existing Electron app is
   not required for the bundled build, and its local credentials are not copied.
 - Known emoji displayed as official `:shortcodes:`; other non-ASCII content
@@ -47,6 +49,13 @@ The app is produced at `build/Keybase Minimal.app`, locally ad-hoc signed with
 hardened runtime. This is not a notarized distribution. See
 [backend build provenance](backend/README.md) for the source lock, patch, and
 manifest. Do not replace its helper or manifest with an unrelated executable.
+
+To build beside an app that is already running, choose a different absolute
+output path:
+
+```sh
+bash scripts/build-app.sh --output "$PWD/build/staged/Keybase Minimal.app"
+```
 
 1. Open the app and choose **Start service**. It runs the bundled foreground Go
    service without launching Electron or KBFS.

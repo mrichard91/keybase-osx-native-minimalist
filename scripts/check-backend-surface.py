@@ -22,10 +22,15 @@ import time
 FORBIDDEN_FRAMEWORKS = frozenset({
     "AVFoundation", "AVFAudio", "AppKit", "CoreMedia", "ImageIO", "WebKit", "QuickLook",
 })
+FORBIDDEN_GO_IMAGE_PACKAGES = frozenset({
+    "image/png", "image/gif", "golang.org/x/image/tiff", "github.com/nf/cr2",
+    "github.com/rwcarlsen/goexif", "camlistore.org/pkg/images", "perkeep.org/pkg/images",
+})
 SCOPE = (
     "Checks fixed early-exit build information, direct Mach-O media/UI linkage, "
-    "and embedded Go module metadata. It does not enumerate every linked Go package, "
-    "standard-library parser, or transitive system-framework dependency."
+    "embedded Go module metadata, and named removed image-package symbols in the actual binary. "
+    "JPEG is explicitly reported when retained. This is a bounded regression check, not an "
+    "inventory of every parser, linked Go package, or transitive system-framework dependency."
 )
 
 
@@ -169,6 +174,43 @@ def parse_go_metadata(data: bytes) -> dict:
     return result
 
 
+def check_go_image_symbols(data: bytes) -> dict:
+    """Inspect native symbol names, including init/data/type symbols, not strings."""
+    try:
+        lines = data.decode("utf-8", errors="strict").splitlines()
+    except UnicodeDecodeError as error:
+        raise SurfaceError("Native symbol metadata is not valid text") from error
+    # A boundary admits Go type/interface wrappers such as type:.eq.<package>,
+    # but prevents a similarly named package inside an unrelated import path
+    # from matching. A period or slash must terminate the exact package prefix.
+    packages = sorted(FORBIDDEN_GO_IMAGE_PACKAGES | {"image/jpeg"})
+    package_pattern = re.compile(r"(?<![A-Za-z0-9_/-])(" + "|".join(re.escape(p) for p in packages) + r")(?=[./])")
+    found, required = set(), set()
+    count = 0
+    for line in lines:
+        if not line.strip():
+            continue
+        # /usr/bin/nm -P emits: name type hexadecimal-value hexadecimal-size.
+        # Go generic/type symbols may contain spaces, so split from the right.
+        fields = line.rsplit(None, 3)
+        if (len(fields) != 4 or not re.fullmatch(r"[A-Za-z?]", fields[1]) or
+                not all(re.fullmatch(r"[0-9A-Fa-f]+", field) for field in fields[2:])):
+            raise SurfaceError("Native symbol metadata has an unexpected format")
+        symbol = fields[0].removeprefix("_")
+        count += 1
+        if symbol in ("main.main", "runtime.main") and fields[1].lower() == "t":
+            required.add(symbol)
+        found.update(package_pattern.findall(symbol))
+    if required != {"main.main", "runtime.main"}:
+        raise SurfaceError("Backend Go symbols are missing or stripped; image-package inspection cannot proceed")
+    forbidden = found & FORBIDDEN_GO_IMAGE_PACKAGES
+    if forbidden:
+        raise SurfaceError("Forbidden Go image package symbols: " + ", ".join(sorted(forbidden)))
+    return dict(symbolCount=count, forbiddenPackagePrefixes=sorted(FORBIDDEN_GO_IMAGE_PACKAGES),
+                retainedImagePackages=sorted(found),
+                scope="Named symbol regression check; retained image/jpeg remains part of the backend's parser surface.")
+
+
 def sha256(path: Path) -> str:
     if path.stat().st_size > 512 * 1024 * 1024:
         raise SurfaceError("Backend exceeds the 512 MiB inspection limit")
@@ -227,9 +269,12 @@ def inspect(binary: Path, upstream: str) -> dict:
             environment=environment, label="Mach-O linkage inspection", timeout=10, output_limit=128 * 1024))
         go_metadata = parse_go_metadata(bounded_run([go_tool, "version", "-m", str(binary)],
             environment=environment, label="Go build metadata inspection", timeout=15, output_limit=2 * 1024 * 1024))
+        go_symbols = check_go_image_symbols(bounded_run(["/usr/bin/nm", "-P", str(binary)],
+            environment=environment, label="Native Go image-symbol inspection", timeout=15, output_limit=16 * 1024 * 1024))
     return dict(schemaVersion=1, policy=1, upstream=upstream, binarySHA256=sha256(binary),
                 buildInfo=info, directLibraries=libraries,
-                forbiddenDirectFrameworks=sorted(FORBIDDEN_FRAMEWORKS), goBuild=go_metadata, scope=SCOPE)
+                forbiddenDirectFrameworks=sorted(FORBIDDEN_FRAMEWORKS), goBuild=go_metadata,
+                goSymbolInspection=go_symbols, scope=SCOPE)
 
 
 def main() -> int:
@@ -243,7 +288,9 @@ def main() -> int:
         if arguments.report is not None:
             write_report(arguments.report, report)
         print(f"Backend surface check passed: policy 1; {len(report['directLibraries'])} direct libraries; "
-              f"{len(report['goBuild']['modules'])} retained Go modules inspected.")
+              f"{len(report['goBuild']['modules'])} retained Go modules; "
+              f"{report['goSymbolInspection']['symbolCount']} symbols checked; "
+              f"retained image packages: {', '.join(report['goSymbolInspection']['retainedImagePackages']) or 'none detected'}.")
         return 0
     except (SurfaceError, OSError, ValueError) as error:
         print(f"Backend surface check failed: {error}", file=sys.stderr)

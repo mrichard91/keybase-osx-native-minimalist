@@ -1,3 +1,313 @@
+diff --git a/go/avatars/render.go b/go/avatars/render.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..10e11eae70c857dc357b8162798078110d02c81a
+--- /dev/null
++++ b/go/avatars/render.go
+@@ -0,0 +1,94 @@
++//go:build !minimalist
++
++package avatars
++
++import (
++	"bytes"
++	"context"
++	"github.com/keybase/client/go/chat/globals"
++	"golang.org/x/image/draw"
++	"image"
++	"image/color"
++	"image/png"
++	"io"
++)
++
++func GetBorderedCircleAvatar(ctx context.Context, g *globals.Context, username string, avatarSize, outerBorder, innerBorder int) (res io.ReadCloser, length int64, err error) {
++	white := color.RGBA{255, 255, 255, 255}
++	blue := color.RGBA{76, 142, 255, 255}
++	avatarReader, err := FetchAvatar(ctx, g, username)
++	if err != nil {
++		return res, length, err
++	}
++	defer avatarReader.Close()
++	avatarImg, _, err := image.Decode(avatarReader)
++	if err != nil {
++		return res, length, err
++	}
++	scaledAvatar := image.NewRGBA(image.Rect(0, 0, avatarSize, avatarSize))
++	draw.BiLinear.Scale(scaledAvatar, scaledAvatar.Bounds(), avatarImg, avatarImg.Bounds(), draw.Over, nil)
++	avatarRadius := avatarSize / 2
++	borderedRadius := avatarRadius + outerBorder + innerBorder
++	resultSize := borderedRadius * 2
++
++	bounds := image.Rect(0, 0, resultSize, resultSize)
++	middle := image.Point{borderedRadius, borderedRadius}
++	iconRect := image.Rect(middle.X-avatarRadius, middle.Y-avatarRadius, middle.X+avatarRadius, middle.Y+avatarRadius)
++	mask := &circleMask{image.Point{avatarRadius, avatarRadius}, avatarRadius}
++
++	result := image.NewRGBA(bounds)
++
++	draw.Draw(result, bounds, &circle{middle, borderedRadius, blue}, image.Point{}, draw.Over)
++	draw.Draw(result, bounds, &circle{middle, avatarRadius + innerBorder, white}, image.Point{}, draw.Over)
++	draw.DrawMask(result, iconRect, scaledAvatar, image.Point{}, mask, image.Point{}, draw.Over)
++
++	var buf bytes.Buffer
++	err = png.Encode(&buf, result)
++	if err != nil {
++		return res, length, err
++	}
++	return io.NopCloser(bytes.NewReader(buf.Bytes())), int64(buf.Len()), nil
++}
++
++type circleMask struct {
++	p image.Point
++	r int
++}
++
++func (c *circleMask) ColorModel() color.Model {
++	return color.AlphaModel
++}
++
++func (c *circleMask) Bounds() image.Rectangle {
++	return image.Rect(c.p.X-c.r, c.p.Y-c.r, c.p.X+c.r, c.p.Y+c.r)
++}
++
++func (c *circleMask) At(x, y int) color.Color {
++	xx, yy, rr := float64(x-c.p.X)+1, float64(y-c.p.Y)+1, float64(c.r)
++	if xx*xx+yy*yy < rr*rr {
++		return color.Alpha{255}
++	}
++	return color.Alpha{0}
++}
++
++type circle struct {
++	p    image.Point
++	r    int
++	fill color.Color
++}
++
++func (c *circle) ColorModel() color.Model {
++	return color.RGBAModel
++}
++
++func (c *circle) Bounds() image.Rectangle {
++	return image.Rect(c.p.X-c.r, c.p.Y-c.r, c.p.X+c.r, c.p.Y+c.r)
++}
++
++func (c *circle) At(x, y int) color.Color {
++	xx, yy, rr := float64(x-c.p.X)+1, float64(y-c.p.Y)+1, float64(c.r)
++	if xx*xx+yy*yy < rr*rr {
++		return c.fill
++	}
++	return color.RGBA{0, 0, 0, 0}
++}
+diff --git a/go/avatars/render_minimalist.go b/go/avatars/render_minimalist.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..118745022a1d43406d6e56ad38ef10ef0fbf4c11
+--- /dev/null
++++ b/go/avatars/render_minimalist.go
+@@ -0,0 +1,14 @@
++//go:build minimalist
++
++package avatars
++
++import (
++	"context"
++	"errors"
++	"github.com/keybase/client/go/chat/globals"
++	"io"
++)
++
++func GetBorderedCircleAvatar(context.Context, *globals.Context, string, int, int, int) (io.ReadCloser, int64, error) {
++	return nil, 0, errors.New("avatar rendering disabled in minimalist build")
++}
+diff --git a/go/avatars/utils.go b/go/avatars/utils.go
+index 09b7b47412d6b6dd9cbcfab4bc103e43c6e07d46..967ea85e9cd7f1720387f7d3a392ed2a8366059d 100644
+--- a/go/avatars/utils.go
++++ b/go/avatars/utils.go
+@@ -4,9 +4,6 @@ import (
+ 	"bytes"
+ 	"context"
+ 	"encoding/base64"
+-	"image"
+-	"image/color"
+-	"image/png"
+ 	"io"
+ 	"net/url"
+ 	"os"
+@@ -15,7 +12,6 @@ import (
+ 	"github.com/keybase/client/go/chat/globals"
+ 	"github.com/keybase/client/go/libkb"
+ 	"github.com/keybase/client/go/protocol/keybase1"
+-	"golang.org/x/image/draw"
+ )
+ 
+ var AllFormats = []keybase1.AvatarFormat{
+@@ -73,83 +69,3 @@ func FetchAvatar(ctx context.Context, g *globals.Context, username string) (res
+ 	}
+ 	return avatarReader, nil
+ }
+-
+-func GetBorderedCircleAvatar(ctx context.Context, g *globals.Context, username string, avatarSize, outerBorder, innerBorder int) (res io.ReadCloser, length int64, err error) {
+-	white := color.RGBA{255, 255, 255, 255}
+-	blue := color.RGBA{76, 142, 255, 255}
+-	avatarReader, err := FetchAvatar(ctx, g, username)
+-	if err != nil {
+-		return res, length, err
+-	}
+-	defer avatarReader.Close()
+-	avatarImg, _, err := image.Decode(avatarReader)
+-	if err != nil {
+-		return res, length, err
+-	}
+-	scaledAvatar := image.NewRGBA(image.Rect(0, 0, avatarSize, avatarSize))
+-	draw.BiLinear.Scale(scaledAvatar, scaledAvatar.Bounds(), avatarImg, avatarImg.Bounds(), draw.Over, nil)
+-	avatarRadius := avatarSize / 2
+-	borderedRadius := avatarRadius + outerBorder + innerBorder
+-	resultSize := borderedRadius * 2
+-
+-	bounds := image.Rect(0, 0, resultSize, resultSize)
+-	middle := image.Point{borderedRadius, borderedRadius}
+-	iconRect := image.Rect(middle.X-avatarRadius, middle.Y-avatarRadius, middle.X+avatarRadius, middle.Y+avatarRadius)
+-	mask := &circleMask{image.Point{avatarRadius, avatarRadius}, avatarRadius}
+-
+-	result := image.NewRGBA(bounds)
+-
+-	draw.Draw(result, bounds, &circle{middle, borderedRadius, blue}, image.Point{}, draw.Over)
+-	draw.Draw(result, bounds, &circle{middle, avatarRadius + innerBorder, white}, image.Point{}, draw.Over)
+-	draw.DrawMask(result, iconRect, scaledAvatar, image.Point{}, mask, image.Point{}, draw.Over)
+-
+-	var buf bytes.Buffer
+-	err = png.Encode(&buf, result)
+-	if err != nil {
+-		return res, length, err
+-	}
+-	return io.NopCloser(bytes.NewReader(buf.Bytes())), int64(buf.Len()), nil
+-}
+-
+-type circleMask struct {
+-	p image.Point
+-	r int
+-}
+-
+-func (c *circleMask) ColorModel() color.Model {
+-	return color.AlphaModel
+-}
+-
+-func (c *circleMask) Bounds() image.Rectangle {
+-	return image.Rect(c.p.X-c.r, c.p.Y-c.r, c.p.X+c.r, c.p.Y+c.r)
+-}
+-
+-func (c *circleMask) At(x, y int) color.Color {
+-	xx, yy, rr := float64(x-c.p.X)+1, float64(y-c.p.Y)+1, float64(c.r)
+-	if xx*xx+yy*yy < rr*rr {
+-		return color.Alpha{255}
+-	}
+-	return color.Alpha{0}
+-}
+-
+-type circle struct {
+-	p    image.Point
+-	r    int
+-	fill color.Color
+-}
+-
+-func (c *circle) ColorModel() color.Model {
+-	return color.RGBAModel
+-}
+-
+-func (c *circle) Bounds() image.Rectangle {
+-	return image.Rect(c.p.X-c.r, c.p.Y-c.r, c.p.X+c.r, c.p.Y+c.r)
+-}
+-
+-func (c *circle) At(x, y int) color.Color {
+-	xx, yy, rr := float64(x-c.p.X)+1, float64(y-c.p.Y)+1, float64(c.r)
+-	if xx*xx+yy*yy < rr*rr {
+-		return c.fill
+-	}
+-	return color.RGBA{0, 0, 0, 0}
+-}
+diff --git a/go/chat/attachments/audio.go b/go/chat/attachments/audio.go
+index 175327dba8c69b49e51d3a30bb7e4282aa9e1345..5ae540602105052da6d8500befb490afb7ba84ab 100644
+--- a/go/chat/attachments/audio.go
++++ b/go/chat/attachments/audio.go
+@@ -1,3 +1,5 @@
++//go:build !minimalist
++
+ package attachments
+ 
+ import (
+diff --git a/go/chat/attachments/audio_minimalist.go b/go/chat/attachments/audio_minimalist.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..1dd7e8236c62e8d958e05076a40ad465924c6c04
+--- /dev/null
++++ b/go/chat/attachments/audio_minimalist.go
+@@ -0,0 +1,12 @@
++//go:build minimalist
++
++package attachments
++
++import (
++	"context"
++	"github.com/keybase/client/go/protocol/chat1"
++)
++
++func (*Sender) MakeAudioPreview(context.Context, []float64, int) (chat1.MakePreviewRes, error) {
++	return chat1.MakePreviewRes{}, errMediaDisabled
++}
+diff --git a/go/chat/attachments/audio_test.go b/go/chat/attachments/audio_test.go
+index 21a85803d80ae19dcb6e5fb0a8bb6d79ba39df4b..ff9631491d9ee1b96fb74c304eef78df4847ca74 100644
+--- a/go/chat/attachments/audio_test.go
++++ b/go/chat/attachments/audio_test.go
+@@ -1,3 +1,5 @@
++//go:build !minimalist
++
+ package attachments
+ 
+ import (
+diff --git a/go/chat/attachments/gif.go b/go/chat/attachments/gif.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..b586dede29bd7e19e7e4dbe32976a210171b4b1f
+--- /dev/null
++++ b/go/chat/attachments/gif.go
+@@ -0,0 +1,22 @@
++//go:build !minimalist
++
++package attachments
++
++import (
++	"context"
++	"errors"
++	"image/gif"
++	"image/png"
++	"io"
++)
++
++func GIFToPNG(ctx context.Context, src io.Reader, dest io.Writer) error {
++	g, err := gif.DecodeAll(src)
++	if err != nil {
++		return err
++	}
++	if len(g.Image) == 0 {
++		return errors.New("no frames in gif")
++	}
++	return png.Encode(dest, g.Image[0])
++}
+diff --git a/go/chat/attachments/gif_minimalist.go b/go/chat/attachments/gif_minimalist.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..cabe53cdcd1755665541dc00c8bffe2329d2856c
+--- /dev/null
++++ b/go/chat/attachments/gif_minimalist.go
+@@ -0,0 +1,12 @@
++//go:build minimalist
++
++package attachments
++
++import (
++	"context"
++	"io"
++)
++
++func GIFToPNG(context.Context, io.Reader, io.Writer) error {
++	return errMediaDisabled
++}
 diff --git a/go/chat/attachments/preview.go b/go/chat/attachments/preview.go
 index d40b6a8f5e4586e6cc4acad384df5f4c467d77e7..8e676cc7ee55e8b5ca631ed04becdd93e2d1c810 100644
 --- a/go/chat/attachments/preview.go
@@ -140,6 +450,46 @@ index 1e46056be29c017a3075a96e3f3b3a1e0e9e8897..e3a6c75ec91a4a4c18fd40a9af9a5acc
  
  package attachments
  
+diff --git a/go/chat/attachments/preview_native_test.go b/go/chat/attachments/preview_native_test.go
+index 72f7fbb21f248e2f63f869a9c9a72bd09f32ab04..b6f9fcbbab42149c9e0842641052df1ee08d5125 100644
+--- a/go/chat/attachments/preview_native_test.go
++++ b/go/chat/attachments/preview_native_test.go
+@@ -1,5 +1,6 @@
+-//go:build darwin || android
++//go:build (darwin || android) && !minimalist
+ // +build darwin android
++// +build !minimalist
+ 
+ package attachments
+ 
+diff --git a/go/chat/attachments/utils.go b/go/chat/attachments/utils.go
+index 36e6f73cf3a19a0a8e5d654f6418f9679381f450..3c5cb9332a0878a588e33e9d014f2e8fa457c073 100644
+--- a/go/chat/attachments/utils.go
++++ b/go/chat/attachments/utils.go
+@@ -5,8 +5,6 @@ import (
+ 	"bytes"
+ 	"context"
+ 	"errors"
+-	"image/gif"
+-	"image/png"
+ 	"io"
+ 	"os"
+ 	"strings"
+@@ -342,14 +340,3 @@ func AddPendingPreview(ctx context.Context, g *globals.Context, obr *chat1.Outbo
+ 	obr.Preview = &mpr
+ 	return nil
+ }
+-
+-func GIFToPNG(ctx context.Context, src io.Reader, dest io.Writer) error {
+-	g, err := gif.DecodeAll(src)
+-	if err != nil {
+-		return err
+-	}
+-	if len(g.Image) == 0 {
+-		return errors.New("no frames in gif")
+-	}
+-	return png.Encode(dest, g.Image[0])
+-}
 diff --git a/go/chat/convsource.go b/go/chat/convsource.go
 index dac3cfe8b46d19ada5f6949c26273afb2ed7f785..34c3035f22777a67229585c9219e08720ee770be 100644
 --- a/go/chat/convsource.go
@@ -183,6 +533,576 @@ index dac3cfe8b46d19ada5f6949c26273afb2ed7f785..34c3035f22777a67229585c9219e0872
  		teamID, err := keybase1.TeamIDFromString(conv.Conv.Metadata.IdTriple.Tlfid.String())
  		if err != nil {
  			s.Debug(ctx, "Push: failed to get team ID: %v", err)
+diff --git a/go/chat/emoji_media.go b/go/chat/emoji_media.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..12d216f7605572ff06d1885e34a8829d1daec565
+--- /dev/null
++++ b/go/chat/emoji_media.go
+@@ -0,0 +1,57 @@
++//go:build !minimalist
++
++package chat
++
++import (
++	"camlistore.org/pkg/images"
++	"context"
++	"errors"
++	"fmt"
++	"github.com/dustin/go-humanize"
++	"github.com/keybase/client/go/chat/attachments"
++	"image/gif"
++)
++
++// validateFile validates the following:
++// file size
++// format
++func (s *DevConvEmojiSource) validateFile(ctx context.Context, filename string) error {
++	finfo, err := attachments.StatOSOrKbfsFile(ctx, s.G().GlobalContext, filename)
++	if err != nil {
++		return NewEmojiValidationErrorSimple(err, "unable to open file")
++	}
++	if finfo.IsDir() {
++		return NewEmojiValidationErrorJustError(errors.New("unable to use a directory"))
++	} else if finfo.Size() > maxEmojiSize {
++		err := errors.New("file too large")
++		return NewEmojiValidationError(err,
++			fmt.Sprintf("emoji filesize too large, must be less than %s", humanize.Bytes(maxEmojiSize)),
++			err.Error())
++	} else if finfo.Size() < minEmojiSize {
++		err := errors.New("file too small")
++		return NewEmojiValidationError(err,
++			fmt.Sprintf("emoji filesize too small, must be greater than %s", humanize.Bytes(minEmojiSize)),
++			err.Error())
++	}
++
++	src, err := attachments.NewReadCloseResetter(ctx, s.G().GlobalContext, filename)
++	if err != nil {
++		return NewEmojiValidationErrorSimple(err, "failed to process file")
++	}
++	defer func() { src.Close() }()
++	if _, _, err = images.Decode(src, nil); err != nil {
++		s.Debug(ctx, "validateFile: failed to decode image: %s", err)
++		if err := src.Reset(); err != nil {
++			return NewEmojiValidationErrorSimple(err, "failed to process file")
++		}
++		g, err := gif.DecodeAll(src)
++		if err != nil {
++			s.Debug(ctx, "validateFile: failed to decode gif: %s", err)
++			return NewEmojiValidationErrorSimple(err, "invalid image file")
++		}
++		if len(g.Image) == 0 {
++			return NewEmojiValidationErrorJustError(errors.New("no image frames in GIF"))
++		}
++	}
++	return nil
++}
+diff --git a/go/chat/emoji_media_minimalist.go b/go/chat/emoji_media_minimalist.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..b7adbe2e92e469eb1fc53a28b34d806add1326c6
+--- /dev/null
++++ b/go/chat/emoji_media_minimalist.go
+@@ -0,0 +1,10 @@
++//go:build minimalist
++
++package chat
++
++import "context"
++
++// Custom emoji images are disabled before any filesystem, network or decoder access.
++func (*DevConvEmojiSource) validateFile(context.Context, string) error {
++	return NewEmojiValidationErrorJustError(errMinimalistUnsupported)
++}
+diff --git a/go/chat/emojisource.go b/go/chat/emojisource.go
+index a1a301f1e1b35beca6cf48d0b71cbe4fd1fdd71a..2fd41582592c3ee131604681bf8eb8548ff55c42 100644
+--- a/go/chat/emojisource.go
++++ b/go/chat/emojisource.go
+@@ -4,7 +4,6 @@ import (
+ 	"context"
+ 	"errors"
+ 	"fmt"
+-	"image/gif"
+ 	"io"
+ 	"net/http"
+ 	"os"
+@@ -12,8 +11,6 @@ import (
+ 	"strings"
+ 	"sync"
+ 
+-	"camlistore.org/pkg/images"
+-	"github.com/dustin/go-humanize"
+ 	"github.com/keybase/client/go/chat/attachments"
+ 	"github.com/keybase/client/go/chat/globals"
+ 	"github.com/keybase/client/go/chat/storage"
+@@ -258,50 +255,6 @@ func (s *DevConvEmojiSource) validateCustomEmoji(ctx context.Context, shortName,
+ 	return shortName, nil
+ }
+ 
+-// validateFile validates the following:
+-// file size
+-// format
+-func (s *DevConvEmojiSource) validateFile(ctx context.Context, filename string) error {
+-	finfo, err := attachments.StatOSOrKbfsFile(ctx, s.G().GlobalContext, filename)
+-	if err != nil {
+-		return NewEmojiValidationErrorSimple(err, "unable to open file")
+-	}
+-	if finfo.IsDir() {
+-		return NewEmojiValidationErrorJustError(errors.New("unable to use a directory"))
+-	} else if finfo.Size() > maxEmojiSize {
+-		err := errors.New("file too large")
+-		return NewEmojiValidationError(err,
+-			fmt.Sprintf("emoji filesize too large, must be less than %s", humanize.Bytes(maxEmojiSize)),
+-			err.Error())
+-	} else if finfo.Size() < minEmojiSize {
+-		err := errors.New("file too small")
+-		return NewEmojiValidationError(err,
+-			fmt.Sprintf("emoji filesize too small, must be greater than %s", humanize.Bytes(minEmojiSize)),
+-			err.Error())
+-	}
+-
+-	src, err := attachments.NewReadCloseResetter(ctx, s.G().GlobalContext, filename)
+-	if err != nil {
+-		return NewEmojiValidationErrorSimple(err, "failed to process file")
+-	}
+-	defer func() { src.Close() }()
+-	if _, _, err = images.Decode(src, nil); err != nil {
+-		s.Debug(ctx, "validateFile: failed to decode image: %s", err)
+-		if err := src.Reset(); err != nil {
+-			return NewEmojiValidationErrorSimple(err, "failed to process file")
+-		}
+-		g, err := gif.DecodeAll(src)
+-		if err != nil {
+-			s.Debug(ctx, "validateFile: failed to decode gif: %s", err)
+-			return NewEmojiValidationErrorSimple(err, "invalid image file")
+-		}
+-		if len(g.Image) == 0 {
+-			return NewEmojiValidationErrorJustError(errors.New("no image frames in GIF"))
+-		}
+-	}
+-	return nil
+-}
+-
+ func (s *DevConvEmojiSource) fromURL(ctx context.Context, url string) (string, error) {
+ 	resp, err := http.Get(url) //nolint:gosec // G107: URL added by user.
+ 	if err != nil {
+diff --git a/go/chat/flip_visualizer.go b/go/chat/flip_visualizer.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..9fb6478d895f97bae1d0821be8acb71e4dca7bbc
+--- /dev/null
++++ b/go/chat/flip_visualizer.go
+@@ -0,0 +1,103 @@
++//go:build !minimalist
++
++package chat
++
++import (
++	"bytes"
++	"encoding/base64"
++	"encoding/hex"
++	"github.com/keybase/client/go/protocol/chat1"
++	"image"
++	"image/color"
++	"image/png"
++	"math"
++)
++
++type FlipVisualizer struct {
++	width, height         int
++	commitmentColors      [256]color.RGBA
++	secretColors          [256]color.RGBA
++	commitmentMatchColors [256]color.RGBA
++}
++
++func NewFlipVisualizer(width, height int) *FlipVisualizer {
++	v := &FlipVisualizer{
++		height: height, // 40
++		width:  width,  // 64
++	}
++	for i := 0; i < 256; i++ {
++		v.commitmentColors[i] = color.RGBA{
++			R: uint8(i),                 //nolint:gosec // G115: Loop bounded by 256, safe for uint8
++			G: uint8((128 + i*5) % 128), //nolint:gosec // G115: Modulo by 128 ensures result fits in uint8
++			B: 255,
++			A: 128,
++		}
++		v.secretColors[i] = color.RGBA{
++			R: 255,
++			G: uint8(64 + i/2), //nolint:gosec // G115: 64 + (0-255)/2 = 64-191, fits in uint8
++			B: 0,
++			A: 255,
++		}
++		v.commitmentMatchColors[i] = color.RGBA{
++			R: uint8(i * 3 / 4),        //nolint:gosec // G115: (0-255)*3/4 = 0-191, fits in uint8
++			G: uint8((192 + i*4) % 64), //nolint:gosec // G115: Modulo by 64 ensures result fits in uint8
++			B: 255,
++			A: 255,
++		}
++	}
++	return v
++}
++
++func (v *FlipVisualizer) fillCell(img *image.NRGBA, x, y, cellHeight, cellWidth int, b byte,
++	palette [256]color.RGBA,
++) {
++	for i := x; i < x+cellWidth; i++ {
++		for j := y; j < y+cellHeight; j++ {
++			img.Set(i, j, palette[b])
++		}
++	}
++}
++
++func (v *FlipVisualizer) fillRow(img *image.NRGBA, startY, cellHeight, cellWidth int,
++	source string, palette [256]color.RGBA,
++) {
++	b, _ := hex.DecodeString(source)
++	x := 0
++	for i := 0; i < len(b); i++ {
++		v.fillCell(img, x, startY, cellHeight, cellWidth, b[i], palette)
++		x += cellWidth
++	}
++}
++
++func (v *FlipVisualizer) Visualize(status *chat1.UICoinFlipStatus) {
++	cellWidth := int(math.Round(float64(v.width) / 32.0))
++	v.width = 32 * cellWidth
++	commitmentImg := image.NewNRGBA(image.Rect(0, 0, v.width, v.height))
++	secretImg := image.NewNRGBA(image.Rect(0, 0, v.width, v.height))
++	numParts := len(status.Participants)
++	if numParts > 0 {
++		startY := 0
++		// just add these next 2 things
++		heightAccum := float64(0) // how far into the image we should be
++		rawRowHeight := float64(v.height) / float64(numParts)
++		for _, p := range status.Participants {
++			heightAccum += rawRowHeight
++			rowHeight := int(math.Round(heightAccum - float64(startY)))
++			if rowHeight > 0 {
++				if p.Reveal != nil {
++					v.fillRow(commitmentImg, startY, rowHeight, cellWidth, p.Commitment,
++						v.commitmentMatchColors)
++					v.fillRow(secretImg, startY, rowHeight, cellWidth, *p.Reveal, v.secretColors)
++				} else {
++					v.fillRow(commitmentImg, startY, rowHeight, cellWidth, p.Commitment, v.commitmentColors)
++				}
++				startY += rowHeight
++			}
++		}
++	}
++	var commitmentBuf, secretBuf bytes.Buffer
++	_ = png.Encode(&commitmentBuf, commitmentImg)
++	_ = png.Encode(&secretBuf, secretImg)
++	status.CommitmentVisualization = base64.StdEncoding.EncodeToString(commitmentBuf.Bytes())
++	status.RevealVisualization = base64.StdEncoding.EncodeToString(secretBuf.Bytes())
++}
+diff --git a/go/chat/flip_visualizer_minimalist.go b/go/chat/flip_visualizer_minimalist.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..7ae85aba3972e5c2ccb7422f8cde38317c222059
+--- /dev/null
++++ b/go/chat/flip_visualizer_minimalist.go
+@@ -0,0 +1,17 @@
++//go:build minimalist
++
++package chat
++
++import "github.com/keybase/client/go/protocol/chat1"
++
++// The chat interfaces retain this type, but no image data is generated.
++type FlipVisualizer struct{}
++
++func NewFlipVisualizer(int, int) *FlipVisualizer { return &FlipVisualizer{} }
++
++func (*FlipVisualizer) Visualize(status *chat1.UICoinFlipStatus) {
++	if status != nil {
++		status.CommitmentVisualization = ""
++		status.RevealVisualization = ""
++	}
++}
+diff --git a/go/chat/flipmanager.go b/go/chat/flipmanager.go
+index 1b4112b0951e7ad1fa38bc25578f8791b49a5a79..807797ae1a2a9660286c17d86ee14ac145b7c76d 100644
+--- a/go/chat/flipmanager.go
++++ b/go/chat/flipmanager.go
+@@ -1,17 +1,10 @@
+ package chat
+ 
+ import (
+-	"bytes"
+ 	"context"
+-	"encoding/base64"
+-	"encoding/hex"
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
+-	"image"
+-	"image/color"
+-	"image/png"
+-	"math"
+ 	"math/big"
+ 	"sort"
+ 	"strconv"
+@@ -1583,92 +1576,3 @@ func (m *FlipManager) ShouldCommit(ctx context.Context) bool {
+ func (m *FlipManager) clearGameCache() {
+ 	m.games.Purge()
+ }
+-
+-type FlipVisualizer struct {
+-	width, height         int
+-	commitmentColors      [256]color.RGBA
+-	secretColors          [256]color.RGBA
+-	commitmentMatchColors [256]color.RGBA
+-}
+-
+-func NewFlipVisualizer(width, height int) *FlipVisualizer {
+-	v := &FlipVisualizer{
+-		height: height, // 40
+-		width:  width,  // 64
+-	}
+-	for i := 0; i < 256; i++ {
+-		v.commitmentColors[i] = color.RGBA{
+-			R: uint8(i),                 //nolint:gosec // G115: Loop bounded by 256, safe for uint8
+-			G: uint8((128 + i*5) % 128), //nolint:gosec // G115: Modulo by 128 ensures result fits in uint8
+-			B: 255,
+-			A: 128,
+-		}
+-		v.secretColors[i] = color.RGBA{
+-			R: 255,
+-			G: uint8(64 + i/2), //nolint:gosec // G115: 64 + (0-255)/2 = 64-191, fits in uint8
+-			B: 0,
+-			A: 255,
+-		}
+-		v.commitmentMatchColors[i] = color.RGBA{
+-			R: uint8(i * 3 / 4),        //nolint:gosec // G115: (0-255)*3/4 = 0-191, fits in uint8
+-			G: uint8((192 + i*4) % 64), //nolint:gosec // G115: Modulo by 64 ensures result fits in uint8
+-			B: 255,
+-			A: 255,
+-		}
+-	}
+-	return v
+-}
+-
+-func (v *FlipVisualizer) fillCell(img *image.NRGBA, x, y, cellHeight, cellWidth int, b byte,
+-	palette [256]color.RGBA,
+-) {
+-	for i := x; i < x+cellWidth; i++ {
+-		for j := y; j < y+cellHeight; j++ {
+-			img.Set(i, j, palette[b])
+-		}
+-	}
+-}
+-
+-func (v *FlipVisualizer) fillRow(img *image.NRGBA, startY, cellHeight, cellWidth int,
+-	source string, palette [256]color.RGBA,
+-) {
+-	b, _ := hex.DecodeString(source)
+-	x := 0
+-	for i := 0; i < len(b); i++ {
+-		v.fillCell(img, x, startY, cellHeight, cellWidth, b[i], palette)
+-		x += cellWidth
+-	}
+-}
+-
+-func (v *FlipVisualizer) Visualize(status *chat1.UICoinFlipStatus) {
+-	cellWidth := int(math.Round(float64(v.width) / 32.0))
+-	v.width = 32 * cellWidth
+-	commitmentImg := image.NewNRGBA(image.Rect(0, 0, v.width, v.height))
+-	secretImg := image.NewNRGBA(image.Rect(0, 0, v.width, v.height))
+-	numParts := len(status.Participants)
+-	if numParts > 0 {
+-		startY := 0
+-		// just add these next 2 things
+-		heightAccum := float64(0) // how far into the image we should be
+-		rawRowHeight := float64(v.height) / float64(numParts)
+-		for _, p := range status.Participants {
+-			heightAccum += rawRowHeight
+-			rowHeight := int(math.Round(heightAccum - float64(startY)))
+-			if rowHeight > 0 {
+-				if p.Reveal != nil {
+-					v.fillRow(commitmentImg, startY, rowHeight, cellWidth, p.Commitment,
+-						v.commitmentMatchColors)
+-					v.fillRow(secretImg, startY, rowHeight, cellWidth, *p.Reveal, v.secretColors)
+-				} else {
+-					v.fillRow(commitmentImg, startY, rowHeight, cellWidth, p.Commitment, v.commitmentColors)
+-				}
+-				startY += rowHeight
+-			}
+-		}
+-	}
+-	var commitmentBuf, secretBuf bytes.Buffer
+-	_ = png.Encode(&commitmentBuf, commitmentImg)
+-	_ = png.Encode(&secretBuf, secretImg)
+-	status.CommitmentVisualization = base64.StdEncoding.EncodeToString(commitmentBuf.Bytes())
+-	status.RevealVisualization = base64.StdEncoding.EncodeToString(secretBuf.Bytes())
+-}
+diff --git a/go/chat/maps/maps.go b/go/chat/maps/maps.go
+index 02f39bf7a02836def06d2ffd755f96a4e8cd1b2a..2f6147bca32c746585ef356e5f2dbb0073cf759a 100644
+--- a/go/chat/maps/maps.go
++++ b/go/chat/maps/maps.go
+@@ -1,13 +1,10 @@
+ package maps
+ 
+ import (
+-	"bytes"
+ 	"context"
+ 	"crypto/tls"
+ 	"errors"
+ 	"fmt"
+-	"image"
+-	"image/png"
+ 	"io"
+ 	"net/http"
+ 	"time"
+@@ -16,7 +13,6 @@ import (
+ 	"github.com/keybase/client/go/chat/types"
+ 	"github.com/keybase/client/go/libkb"
+ 	"github.com/keybase/client/go/protocol/chat1"
+-	"golang.org/x/image/draw"
+ 	"golang.org/x/net/context/ctxhttp"
+ )
+ 
+@@ -109,31 +105,3 @@ func MapReaderFromURL(ctx context.Context, g *globals.Context, url string) (res
+ 	}
+ 	return resp.Body, resp.ContentLength, nil
+ }
+-
+-func DecorateMap(ctx context.Context, avatarReader, mapReader io.Reader) (res io.ReadCloser, length int64, err error) {
+-	avatarImg, _, err := image.Decode(avatarReader)
+-	if err != nil {
+-		return res, length, err
+-	}
+-	avatarRadius := avatarImg.Bounds().Dx() / 2
+-
+-	mapPng, err := png.Decode(mapReader)
+-	if err != nil {
+-		return res, length, err
+-	}
+-	bounds := mapPng.Bounds()
+-
+-	middle := image.Point{bounds.Max.X / 2, bounds.Max.Y / 2}
+-	iconRect := image.Rect(middle.X-avatarRadius, middle.Y-avatarRadius, middle.X+avatarRadius, middle.Y+avatarRadius)
+-
+-	decorated := image.NewRGBA(bounds)
+-	draw.Draw(decorated, bounds, mapPng, image.Point{}, draw.Src)
+-	draw.Draw(decorated, iconRect, avatarImg, image.Point{}, draw.Over)
+-
+-	var buf bytes.Buffer
+-	err = png.Encode(&buf, decorated)
+-	if err != nil {
+-		return res, length, err
+-	}
+-	return io.NopCloser(bytes.NewReader(buf.Bytes())), int64(buf.Len()), nil
+-}
+diff --git a/go/chat/maps/render.go b/go/chat/maps/render.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..6b2e08da4f470cfc2061bfb49987b6bfad71074f
+--- /dev/null
++++ b/go/chat/maps/render.go
+@@ -0,0 +1,40 @@
++//go:build !minimalist
++
++package maps
++
++import (
++	"bytes"
++	"context"
++	"golang.org/x/image/draw"
++	"image"
++	"image/png"
++	"io"
++)
++
++func DecorateMap(ctx context.Context, avatarReader, mapReader io.Reader) (res io.ReadCloser, length int64, err error) {
++	avatarImg, _, err := image.Decode(avatarReader)
++	if err != nil {
++		return res, length, err
++	}
++	avatarRadius := avatarImg.Bounds().Dx() / 2
++
++	mapPng, err := png.Decode(mapReader)
++	if err != nil {
++		return res, length, err
++	}
++	bounds := mapPng.Bounds()
++
++	middle := image.Point{bounds.Max.X / 2, bounds.Max.Y / 2}
++	iconRect := image.Rect(middle.X-avatarRadius, middle.Y-avatarRadius, middle.X+avatarRadius, middle.Y+avatarRadius)
++
++	decorated := image.NewRGBA(bounds)
++	draw.Draw(decorated, bounds, mapPng, image.Point{}, draw.Src)
++	draw.Draw(decorated, iconRect, avatarImg, image.Point{}, draw.Over)
++
++	var buf bytes.Buffer
++	err = png.Encode(&buf, decorated)
++	if err != nil {
++		return res, length, err
++	}
++	return io.NopCloser(bytes.NewReader(buf.Bytes())), int64(buf.Len()), nil
++}
+diff --git a/go/chat/maps/render_minimalist.go b/go/chat/maps/render_minimalist.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..db6f67524e5dbff8da8d1cbf82a8ee3d17b9e669
+--- /dev/null
++++ b/go/chat/maps/render_minimalist.go
+@@ -0,0 +1,13 @@
++//go:build minimalist
++
++package maps
++
++import (
++	"context"
++	"errors"
++	"io"
++)
++
++func DecorateMap(context.Context, io.Reader, io.Reader) (io.ReadCloser, int64, error) {
++	return nil, 0, errors.New("map rendering disabled in minimalist build")
++}
+diff --git a/go/chat/minimalist_images_test.go b/go/chat/minimalist_images_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..a18591a99d5d19cf749d9b44480cb7b2ba13b4b6
+--- /dev/null
++++ b/go/chat/minimalist_images_test.go
+@@ -0,0 +1,43 @@
++//go:build minimalist
++
++package chat
++
++import (
++	"context"
++	"testing"
++
++	"github.com/keybase/client/go/avatars"
++	"github.com/keybase/client/go/chat/attachments"
++	"github.com/keybase/client/go/chat/maps"
++	"github.com/keybase/client/go/protocol/chat1"
++)
++
++func TestMinimalistImageFunctionsDoNotReadOrRender(t *testing.T) {
++	ctx := context.Background()
++	// Nil dependencies would panic if a disabled implementation tried to open,
++	// read, render or obtain a network-backed avatar. Rejection must come first.
++	if (*DevConvEmojiSource)(nil).validateFile(ctx, "unused-image") == nil {
++		t.Fatal("custom emoji accepted")
++	}
++	if attachments.GIFToPNG(ctx, nil, nil) == nil {
++		t.Fatal("GIF conversion accepted")
++	}
++	preview, err := (*attachments.Sender)(nil).MakeAudioPreview(ctx, nil, 1)
++	if err == nil || preview.Location != nil {
++		t.Fatal("audio waveform rendered")
++	}
++	avatar, size, err := avatars.GetBorderedCircleAvatar(ctx, nil, "unused", 1, 1, 1)
++	if err == nil || avatar != nil || size != 0 {
++		t.Fatal("avatar rendered")
++	}
++	mapImage, size, err := maps.DecorateMap(ctx, nil, nil)
++	if err == nil || mapImage != nil || size != 0 {
++		t.Fatal("map rendered")
++	}
++	status := chat1.UICoinFlipStatus{CommitmentVisualization: "old-image", RevealVisualization: "old-image"}
++	visualizer := NewFlipVisualizer(-1, -1)
++	visualizer.Visualize(&status)
++	if status.CommitmentVisualization != "" || status.RevealVisualization != "" {
++		t.Fatal("coin-flip images retained")
++	}
++}
 diff --git a/go/chat/minimalist_policy.go b/go/chat/minimalist_policy.go
 new file mode 100644
 index 0000000000000000000000000000000000000000..255954d39c983c74eca6e1b9aed630a1cef25d89
@@ -977,10 +1897,10 @@ index ae3b46e07e6d31df10edb2694db18f9105ede461..8958aa6c0cde5cd2e2d958bd91192cc0
  		if gcErr := d.tryGregordConnect(); gcErr != nil {
 diff --git a/go/service/minimalist.go b/go/service/minimalist.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..71b02d9270af04d94e8721e109b149828c691df5
+index 0000000000000000000000000000000000000000..d18ee244fcd834e55147620ad6b6de6b3982d7f7
 --- /dev/null
 +++ b/go/service/minimalist.go
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,261 @@
 +package service
 +
 +import (
@@ -1137,10 +2057,11 @@ index 0000000000000000000000000000000000000000..71b02d9270af04d94e8721e109b14982
 +	g.LiveLocationTracker = minimalistLocation{}
 +	g.BotCommandManager = types.DummyBotCommandManager{}
 +	g.UIInboxLoader = types.DummyUIInboxLoader{}
-+	g.UIThreadLoader = types.DummyUIThreadLoader{}
++	g.UIThreadLoader = &minimalistThreadLoader{UIThreadLoader: chat.NewUIThreadLoader(g, ri)}
 +	g.ParticipantsSource = chat.NewCachingParticipantSource(g, ri)
 +	g.EmojiSource = types.DummyEmojiSource{}
 +	syncer.RegisterOfflinable(g.InboxSource)
++	syncer.RegisterOfflinable(g.UIThreadLoader)
 +	syncer.RegisterOfflinable(g.FetchRetrier)
 +	syncer.RegisterOfflinable(g.MessageDeliverer)
 +	g.AddUserChangedHandler(chat.NewIdentifyChangedHandler(g))
@@ -1214,24 +2135,55 @@ index 0000000000000000000000000000000000000000..71b02d9270af04d94e8721e109b14982
 +func (minimalistAvatarLoader) OnDbNuke(libkb.MetaContext) error       { return nil }
 +func (minimalistAvatarLoader) StartBackgroundTasks(libkb.MetaContext) {}
 +func (minimalistAvatarLoader) StopBackgroundTasks(libkb.MetaContext)  {}
++
++// The blocking official loader preserves verified ConvSource reads, pagination,
++// read-marking queries and errors. Its nonblocking rich-UI path is not needed.
++type minimalistThreadLoader struct {
++	*chat.UIThreadLoader
++}
++
++var _ types.UIThreadLoader = (*minimalistThreadLoader)(nil)
++
++func (t *minimalistThreadLoader) Load(ctx context.Context, uid gregor1.UID,
++	convID chat1.ConversationID, reason chat1.GetThreadReason, knownRemotes []string,
++	query *chat1.GetThreadQuery, pagination *chat1.Pagination,
++) (chat1.ThreadView, error) {
++	// GetThreadLocal passes nil. Do not expose its optional predecoded-remote
++	// shortcut through future callers of this deliberately narrow wrapper.
++	if len(knownRemotes) != 0 {
++		return chat1.ThreadView{}, errMinimalistDisabled
++	}
++	return t.UIThreadLoader.Load(ctx, uid, convID, reason, nil, query, pagination)
++}
++
++func (*minimalistThreadLoader) LoadNonblock(context.Context, libkb.ChatUI, gregor1.UID,
++	chat1.ConversationID, chat1.GetThreadReason, chat1.GetThreadNonblockPgMode,
++	chat1.GetThreadNonblockCbMode, []string, *chat1.GetThreadQuery, *chat1.UIPagination,
++) error {
++	return errMinimalistDisabled
++}
 diff --git a/go/service/minimalist_test.go b/go/service/minimalist_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..37eb1a122dc721ba407637c5f7b87a66f9d2beed
+index 0000000000000000000000000000000000000000..213f57a929c83c9c31d84d694295f38053dd8b8a
 --- /dev/null
 +++ b/go/service/minimalist_test.go
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,188 @@
 +//go:build minimalist
 +
 +package service
 +
 +import (
 +	"context"
++	"errors"
++	"reflect"
 +	"testing"
 +
 +	"github.com/keybase/client/go/chat/attachments"
++	"github.com/keybase/client/go/chat/types"
 +	"github.com/keybase/client/go/chat/utils"
 +	"github.com/keybase/client/go/libkb"
 +	"github.com/keybase/client/go/protocol/chat1"
++	"github.com/keybase/client/go/protocol/gregor1"
 +	"github.com/keybase/go-framed-msgpack-rpc/rpc"
 +)
 +
@@ -1314,5 +2266,93 @@ index 0000000000000000000000000000000000000000..37eb1a122dc721ba407637c5f7b87a66
 +				t.Errorf("exposed %s.%s", protocol.Name, forbidden)
 +			}
 +		}
++	}
++}
++
++// Only Pull is implemented: an accidental rich/background callback fails the
++// test instead of silently succeeding through another dummy method.
++type minimalistReadSource struct {
++	types.ConversationSource
++	pull func(context.Context, chat1.ConversationID, gregor1.UID, chat1.GetThreadReason,
++		func() chat1.RemoteInterface, *chat1.GetThreadQuery, *chat1.Pagination) (chat1.ThreadView, error)
++}
++
++func (s minimalistReadSource) Pull(ctx context.Context, convID chat1.ConversationID,
++	uid gregor1.UID, reason chat1.GetThreadReason, ri func() chat1.RemoteInterface,
++	query *chat1.GetThreadQuery, pagination *chat1.Pagination,
++) (chat1.ThreadView, error) {
++	return s.pull(ctx, convID, uid, reason, ri, query, pagination)
++}
++
++type minimalistReadRemote struct{ chat1.RemoteInterface }
++
++func TestMinimalistThreadReadWiring(t *testing.T) {
++	t.Setenv("KEYBASE_SECRET_STORE_FILE", "1")
++	tc := libkb.SetupTest(t, "minimalist-thread-read", 1)
++	defer tc.Cleanup()
++	tc.G.SetService()
++	svc := NewService(tc.G, false)
++	remote := &minimalistReadRemote{}
++	svc.setupMinimalistChatModules(func() chat1.RemoteInterface { return remote })
++	g := svc.ChatG()
++	uid := gregor1.UID{1, 2, 3}
++	convID := chat1.ConversationID{4, 5, 6}
++	query := &chat1.GetThreadQuery{MarkAsRead: false}
++	pagination := &chat1.Pagination{Num: 100, Next: []byte("request-page")}
++	expected := chat1.ThreadView{
++		Messages: []chat1.MessageUnboxed{chat1.NewMessageUnboxedWithValid(chat1.MessageUnboxedValid{
++			ServerHeader: chat1.MessageServerHeader{MessageID: 42},
++			MessageBody:  chat1.NewMessageBodyWithText(chat1.MessageText{Body: "synthetic verified text"}),
++		})},
++		Pagination: &chat1.Pagination{Next: []byte("next-page"), Last: false},
++	}
++	calls := 0
++	var sourceErr error
++	g.ConvSource = minimalistReadSource{pull: func(_ context.Context, gotConv chat1.ConversationID,
++		gotUID gregor1.UID, reason chat1.GetThreadReason, ri func() chat1.RemoteInterface,
++		gotQuery *chat1.GetThreadQuery, gotPagination *chat1.Pagination,
++	) (chat1.ThreadView, error) {
++		calls++
++		if !reflect.DeepEqual(gotConv, convID) || !reflect.DeepEqual(gotUID, uid) ||
++			reason != chat1.GetThreadReason_GENERAL || ri() != remote ||
++			gotQuery != query || gotPagination != pagination {
++			t.Fatal("thread loader changed the verified source request")
++		}
++		return expected, sourceErr
++	}}
++	ctx := context.Background()
++	for _, markRead := range []bool{false, true} {
++		query.MarkAsRead = markRead
++		thread, err := g.UIThreadLoader.Load(ctx, uid, convID, chat1.GetThreadReason_GENERAL, nil, query, pagination)
++		if err != nil || !reflect.DeepEqual(thread, expected) || len(thread.Messages) != 1 {
++			t.Fatalf("thread result was lost: %#v, %v", thread, err)
++		}
++		if query.MarkAsRead != markRead {
++			t.Fatal("read-marking preference changed")
++		}
++	}
++	sourceErr = errors.New("synthetic identity/network failure")
++	if _, err := g.UIThreadLoader.Load(ctx, uid, convID, chat1.GetThreadReason_GENERAL, nil, query, pagination); !errors.Is(err, sourceErr) {
++		t.Fatalf("source failure was swallowed: %v", err)
++	}
++	if calls != 3 {
++		t.Fatalf("verified source was not reached: calls=%d", calls)
++	}
++	g.UIThreadLoader.Disconnected(ctx)
++	if !g.UIThreadLoader.IsOffline(ctx) {
++		t.Fatal("offline state was discarded")
++	}
++	g.UIThreadLoader.Connected(ctx)
++	if g.UIThreadLoader.IsOffline(ctx) {
++		t.Fatal("reconnect state was discarded")
++	}
++	if _, err := g.UIThreadLoader.Load(ctx, uid, convID, chat1.GetThreadReason_GENERAL, []string{"untrusted remote shortcut"}, query, pagination); !errors.Is(err, errMinimalistDisabled) {
++		t.Fatal("known-remote parsing shortcut was allowed")
++	}
++	if err := g.UIThreadLoader.LoadNonblock(ctx, nil, uid, convID, chat1.GetThreadReason_GENERAL, 0, 0, nil, query, nil); !errors.Is(err, errMinimalistDisabled) {
++		t.Fatal("nonblocking rich thread loading was allowed")
++	}
++	if calls != 3 {
++		t.Fatal("disabled rich loading reached the conversation source")
 +	}
 +}

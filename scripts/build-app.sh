@@ -1,6 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+APP="$PWD/build/Keybase Minimal.app"
+if [ "$#" -gt 0 ]; then
+    if [ "$#" -ne 2 ] || [ "$1" != "--output" ] || [[ "$2" != /*.app ]]; then
+        printf 'Usage: %s [--output /absolute/path/Name.app]\n' "$0" >&2
+        exit 2
+    fi
+    APP="$2"
+fi
 export CLANG_MODULE_CACHE_PATH="${TMPDIR:-/tmp}/keybase-minimal-clang-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="${TMPDIR:-/tmp}/keybase-minimal-swift-cache"
 if [ -d /Applications/Xcode.app/Contents/Developer ]; then
@@ -8,7 +16,6 @@ if [ -d /Applications/Xcode.app/Contents/Developer ]; then
 fi
 bash scripts/build-backend.sh
 xcrun swift build --build-system native --disable-sandbox -c release
-APP="$PWD/build/Keybase Minimal.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Helpers"
 cp "$PWD/build/backend/keybase-minimalist" "$APP/Contents/Helpers/keybase-minimalist"
 cp "$PWD/build/backend/backend.json" "$APP/Contents/Resources/backend.json"

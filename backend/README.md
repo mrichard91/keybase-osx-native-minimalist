@@ -36,9 +36,15 @@ the executable and manifest together inside its signed bundle.
 Before writing the manifest, the build checks the helper's fixed
 `--minimalist-build-info` diagnostic against the expected policy and source pin.
 That early-exit path does not initialize account configuration or the service.
-The surface checker also rejects direct links to prohibited UI/media frameworks
-and records retained Go modules. The notices collector gathers available license
+The surface checker also rejects direct links to prohibited UI/media frameworks,
+records retained Go modules, and uses bounded `/usr/bin/nm` output to reject
+symbols from the removed image packages. It explicitly reports retained JPEG
+symbols. This checks named packages, not every parser or transitive system
+dependency. The notices collector gathers available license
 texts for linked modules and reports missing coverage explicitly.
+The current rebuilt helper records 74 modules and 90 collected notice files, with
+two missing/incomplete notice entries. These counts describe collected evidence,
+not complete license coverage; see the dated [validation record](../docs/VALIDATION.md).
 
 ## Source and dependency checks
 
@@ -105,10 +111,13 @@ test package. The selected policy tests still run, and production compilation
 is checked separately. This does not claim that the full upstream tree passes
 modern vet or a security audit.
 
-The patch gates rich-message actions, removes selected native media helper
-implementations from this build, and limits exposed service methods. It preserves
-the official identity and cryptographic implementation. It does not prove every
-unused Go dependency or every protocol decoder has been removed. Incoming
+The patch gates rich-message actions, removes native media helpers and the
+GIF/PNG/TIFF/CR2 parser imports, and limits exposed service methods. The official
+blocking thread reader remains connected to the verified conversation source;
+a synthetic wiring test covers message results, pagination and source failures.
+It preserves the official identity and cryptographic implementation. JPEG remains
+linked through the unchanged official OpenPGP photo helper. These exclusions do
+not prove every unused dependency or protocol decoder has been removed. Incoming
 encrypted messages still pass through official metadata decoding, and remaining
 linked dependencies need review as the backend is reduced further. See
 [backend minimization](../docs/BACKEND-MINIMIZATION.md) and
