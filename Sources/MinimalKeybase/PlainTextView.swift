@@ -6,6 +6,19 @@ final class PlainTextView: NSTextView {
     var onSend: (() -> Void)?
     var onRejectedInput: ((String) -> Void)?
 
+    /// A recipient/account change is not an edit of the previous draft. Neither
+    /// marked text nor Undo may transfer its contents into another conversation.
+    func replaceDraft(_ text: String) {
+        let manager = undoManager
+        breakUndoCoalescing()
+        unmarkText()
+        manager?.removeAllActions()
+        string = (try? ASCIIText.normalizeInput(text)) ?? ""
+        setSelectedRange(NSRange(location: (string as NSString).length, length: 0))
+        manager?.removeAllActions()
+        didChangeText()
+    }
+
     override func insertText(_ insertString: Any, replacementRange: NSRange) {
         guard let edit = normalizedEdit(insertString, replacing: replacementRange) else { return }
         super.insertText(edit.text, replacementRange: edit.range)
@@ -72,9 +85,16 @@ final class PlainTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 36 && !event.modifierFlags.contains(.shift) {
-            onSend?()
-        } else { super.keyDown(with: event) }
+        let isReturn = event.keyCode == 36 || event.keyCode == 76
+        if isReturn, isEditable, onSend != nil {
+            // Return confirms an input-method composition before it can send.
+            if hasMarkedText() { unmarkText(); return }
+            if event.modifierFlags.contains(.shift) || event.modifierFlags.contains(.option) {
+                insertNewline(nil)
+            } else { onSend?() }
+            return
+        }
+        super.keyDown(with: event)
     }
 
     func configurePlainText(editable: Bool) {
@@ -92,6 +112,7 @@ final class PlainTextView: NSTextView {
         isAutomaticTextCompletionEnabled = false
         isContinuousSpellCheckingEnabled = false
         isGrammarCheckingEnabled = false
+        if #available(macOS 15.0, *) { writingToolsBehavior = .none }
         usesRuler = false
         usesFontPanel = false
         allowsUndo = editable

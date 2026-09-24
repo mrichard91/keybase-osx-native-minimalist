@@ -81,4 +81,13 @@ final class ProcessRunnerTests: XCTestCase {
         XCTAssertThrowsError(try KeybaseExecutable.validate(URL(fileURLWithPath: "/bin/echo")))
         XCTAssertThrowsError(try KeybaseExecutable.validate(URL(fileURLWithPath: "/usr/local/bin/keybase")))
     }
+
+    func testExitedCommandCannotLeaveDescendantsRunning() async throws {
+        let fixture = try await ProcessFixture.make(.exitsLeavingChild)
+        let result = try await ProcessRunner.run(executable: fixture.executable, arguments: [], timeout: 3)
+        XCTAssertEqual(result.status, 0)
+        let pid = try await fixture.recordedPID(), descendant = try await fixture.recordedPID("child")
+        await ProcessFixture.assertGone(pid)
+        await ProcessFixture.assertGone(descendant)
+    }
 }

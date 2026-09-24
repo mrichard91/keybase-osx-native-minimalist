@@ -1,0 +1,1318 @@
+diff --git a/go/chat/attachments/preview.go b/go/chat/attachments/preview.go
+index d40b6a8f5e4586e6cc4acad384df5f4c467d77e7..8e676cc7ee55e8b5ca631ed04becdd93e2d1c810 100644
+--- a/go/chat/attachments/preview.go
++++ b/go/chat/attachments/preview.go
+@@ -1,3 +1,5 @@
++//go:build !minimalist
++
+ package attachments
+ 
+ import (
+diff --git a/go/chat/attachments/preview_darwin.go b/go/chat/attachments/preview_darwin.go
+index ac6efa7b4e9461dd18940f290b68e6243e053525..eb88b805fa6fcd94c5fe9dec84359a23cf46f44f 100644
+--- a/go/chat/attachments/preview_darwin.go
++++ b/go/chat/attachments/preview_darwin.go
+@@ -1,5 +1,5 @@
+-//go:build darwin
+-// +build darwin
++//go:build darwin && !minimalist
++// +build darwin,!minimalist
+ 
+ package attachments
+ 
+diff --git a/go/chat/attachments/preview_darwin_ios.go b/go/chat/attachments/preview_darwin_ios.go
+index 1efa101b1f24ef3bf6e11d2a8e097272d48cd58a..659792980bfc998fa078ba3f4995b04e0ea4c6fe 100644
+--- a/go/chat/attachments/preview_darwin_ios.go
++++ b/go/chat/attachments/preview_darwin_ios.go
+@@ -1,5 +1,5 @@
+-//go:build ios
+-// +build ios
++//go:build ios && !minimalist
++// +build ios,!minimalist
+ 
+ package attachments
+ 
+diff --git a/go/chat/attachments/preview_darwin_noios.go b/go/chat/attachments/preview_darwin_noios.go
+index 59c288146b6dcdae21247e3916e76e2c04967530..b0f01da04228e1a17e117b5fb0ba8d312da5a692 100644
+--- a/go/chat/attachments/preview_darwin_noios.go
++++ b/go/chat/attachments/preview_darwin_noios.go
+@@ -1,5 +1,5 @@
+-//go:build darwin && !ios && !android
+-// +build darwin,!ios,!android
++//go:build darwin && !ios && !android && !minimalist
++// +build darwin,!ios,!android,!minimalist
+ 
+ package attachments
+ 
+diff --git a/go/chat/attachments/preview_dummy.go b/go/chat/attachments/preview_dummy.go
+index 2b83ed856e2d29aec25c4ca7b62102cc0f6f5b6b..4653ca8eeca4d7b72ac79bf7ba408074fea8eff2 100644
+--- a/go/chat/attachments/preview_dummy.go
++++ b/go/chat/attachments/preview_dummy.go
+@@ -1,5 +1,5 @@
+-//go:build !darwin && !android
+-// +build !darwin,!android
++//go:build (!darwin && !android) || minimalist
++// +build !darwin,!android minimalist
+ 
+ package attachments
+ 
+@@ -7,8 +7,10 @@ import (
+ 	"context"
+ 	"io"
+ 
++	"errors"
+ 	"github.com/keybase/client/go/chat/types"
+ 	"github.com/keybase/client/go/chat/utils"
++	"github.com/keybase/client/go/libkb"
+ )
+ 
+ func previewVideo(ctx context.Context, log utils.DebugLabeler, src io.Reader,
+@@ -18,5 +20,8 @@ func previewVideo(ctx context.Context, log utils.DebugLabeler, src io.Reader,
+ }
+ 
+ func HEICToJPEG(ctx context.Context, log utils.DebugLabeler, basename string) (dat []byte, err error) {
++	if libkb.IsMinimalistBuild {
++		return nil, errors.New("media processing disabled in minimalist build")
++	}
+ 	return nil, nil
+ }
+diff --git a/go/chat/attachments/preview_minimalist.go b/go/chat/attachments/preview_minimalist.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..33b129c9addf6467c337f14ebb9f7fd4902adeed
+--- /dev/null
++++ b/go/chat/attachments/preview_minimalist.go
+@@ -0,0 +1,46 @@
++//go:build minimalist
++
++package attachments
++
++/*
++#cgo darwin LDFLAGS: -framework Foundation -framework CoreServices
++*/
++import "C"
++
++import (
++	"context"
++	"errors"
++	"github.com/keybase/client/go/chat/types"
++	"github.com/keybase/client/go/chat/utils"
++	"io"
++)
++
++var errMediaDisabled = errors.New("media processing disabled in minimalist build")
++
++type PreviewRes struct {
++	Source            []byte
++	ContentType       string
++	BaseWidth         int
++	BaseHeight        int
++	BaseDurationMs    int
++	BaseIsAudio       bool
++	AudioAmps         []float64
++	PreviewWidth      int
++	PreviewHeight     int
++	PreviewDurationMs int
++}
++
++func IsFatalImageErr(error) bool { return false }
++
++// Rejection happens without reading or decoding a single byte of the input.
++func Preview(context.Context, utils.DebugLabeler, ReadResetter, string, string, types.NativeVideoHelper) (*PreviewRes, error) {
++	return nil, errMediaDisabled
++}
++
++func previewVideoBlank(context.Context, utils.DebugLabeler, io.Reader, string) (*PreviewRes, error) {
++	return nil, errMediaDisabled
++}
++
++// LinkNoop preserves the native-messaging host's static linking hook without
++// importing or linking any native audio/video/image framework.
++func LinkNoop() {}
+diff --git a/go/chat/attachments/preview_native.go b/go/chat/attachments/preview_native.go
+index 1e46056be29c017a3075a96e3f3b3a1e0e9e8897..e3a6c75ec91a4a4c18fd40a9af9a5acc754ac361 100644
+--- a/go/chat/attachments/preview_native.go
++++ b/go/chat/attachments/preview_native.go
+@@ -1,5 +1,6 @@
+-//go:build darwin || android
++//go:build (darwin || android) && !minimalist
+ // +build darwin android
++// +build !minimalist
+ 
+ package attachments
+ 
+diff --git a/go/chat/convsource.go b/go/chat/convsource.go
+index dac3cfe8b46d19ada5f6949c26273afb2ed7f785..34c3035f22777a67229585c9219e08720ee770be 100644
+--- a/go/chat/convsource.go
++++ b/go/chat/convsource.go
+@@ -56,6 +56,9 @@ func (s *baseConversationSource) Sign(payload []byte) ([]byte, error) {
+ func (s *baseConversationSource) DeleteAssets(ctx context.Context, uid gregor1.UID,
+ 	convID chat1.ConversationID, assets []chat1.Asset,
+ ) {
++	if libkb.IsMinimalistBuild {
++		return
++	}
+ 	if len(assets) == 0 {
+ 		return
+ 	}
+@@ -75,6 +78,9 @@ func (s *baseConversationSource) DeleteAssets(ctx context.Context, uid gregor1.U
+ }
+ 
+ func (s *baseConversationSource) addPendingPreviews(ctx context.Context, thread *chat1.ThreadView) {
++	if libkb.IsMinimalistBuild {
++		return
++	}
+ 	for index, m := range thread.Messages {
+ 		if !m.IsOutbox() {
+ 			continue
+@@ -92,6 +98,9 @@ func (s *baseConversationSource) addPendingPreviews(ctx context.Context, thread
+ func (s *baseConversationSource) addConversationCards(ctx context.Context, uid gregor1.UID, reason chat1.GetThreadReason,
+ 	convID chat1.ConversationID, convOptional *chat1.ConversationLocal, thread *chat1.ThreadView,
+ ) {
++	if libkb.IsMinimalistBuild {
++		return
++	}
+ 	ctxShort, ctxShortCancel := context.WithTimeout(ctx, 2*time.Second)
+ 	defer ctxShortCancel()
+ 	if journeycardShouldNotRunOnReason[reason] {
+@@ -581,7 +590,7 @@ func (s *HybridConversationSource) Push(ctx context.Context, convID chat1.Conver
+ 	if err = s.mergeMaybeNotify(ctx, conv, uid, []chat1.MessageUnboxed{decmsg}, chat1.GetThreadReason_GENERAL); err != nil {
+ 		return decmsg, continuousUpdate, err
+ 	}
+-	if msg.ClientHeader.Sender.Eq(uid) && conv.GetMembersType() == chat1.ConversationMembersType_TEAM {
++	if !libkb.IsMinimalistBuild && msg.ClientHeader.Sender.Eq(uid) && conv.GetMembersType() == chat1.ConversationMembersType_TEAM {
+ 		teamID, err := keybase1.TeamIDFromString(conv.Conv.Metadata.IdTriple.Tlfid.String())
+ 		if err != nil {
+ 			s.Debug(ctx, "Push: failed to get team ID: %v", err)
+diff --git a/go/chat/minimalist_policy.go b/go/chat/minimalist_policy.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..255954d39c983c74eca6e1b9aed630a1cef25d89
+--- /dev/null
++++ b/go/chat/minimalist_policy.go
+@@ -0,0 +1,71 @@
++package chat
++
++import (
++	"errors"
++	"strings"
++
++	"github.com/keybase/client/go/libkb"
++	"github.com/keybase/client/go/protocol/chat1"
++)
++
++var errMinimalistUnsupported = errors.New("operation disabled in minimalist backend: only private ASCII text chat is supported")
++
++// This policy is fixed at compile time. A command-line flag or account setting
++// cannot enable rich message processing in the minimalist service.
++func validateMinimalistText(msg chat1.MessagePlaintext) error {
++	if !libkb.IsMinimalistBuild {
++		return nil
++	}
++	if msg.ClientHeader.TlfPublic || msg.ClientHeader.EphemeralMetadata != nil ||
++		(msg.ClientHeader.Conv.TopicType != chat1.TopicType_CHAT && msg.ClientHeader.Conv.TopicType != chat1.TopicType_NONE) ||
++		msg.ClientHeader.MessageType != chat1.MessageType_TEXT {
++		return errMinimalistUnsupported
++	}
++	typ, err := msg.MessageBody.MessageType()
++	if err != nil || typ != chat1.MessageType_TEXT {
++		return errMinimalistUnsupported
++	}
++	text := msg.MessageBody.Text()
++	if len(text.Body) == 0 || len(text.Body) > 10000 || strings.TrimSpace(text.Body) == "" ||
++		len(text.Payments) != 0 ||
++		text.LiveLocation != nil || len(text.Emojis) != 0 || len(text.TeamMentions) != 0 ||
++		len(text.UserMentions) != 0 || text.ReplyTo != nil || text.ReplyToUID != nil {
++		return errMinimalistUnsupported
++	}
++	for _, ch := range []byte(text.Body) {
++		if ch != '\n' && (ch < 32 || ch > 126) {
++			return errMinimalistUnsupported
++		}
++	}
++	return nil
++}
++
++// Sender.Prepare is also reached by old queued items and internal helpers, not
++// only user RPCs. Keep the few control messages required to create/join a chat;
++// reject media here so an old outbox cannot bypass the user-facing text gate.
++func validateMinimalistSend(msg chat1.MessagePlaintext, conv *chat1.ConversationLocal) error {
++	if !libkb.IsMinimalistBuild {
++		return nil
++	}
++	if msg.ClientHeader.TlfPublic || (conv != nil && (conv.IsPublic() || conv.GetTopicType() != chat1.TopicType_CHAT)) {
++		return errMinimalistUnsupported
++	}
++	if conv == nil && msg.ClientHeader.Conv.TopicType != chat1.TopicType_CHAT {
++		return errMinimalistUnsupported
++	}
++	bodyType, err := msg.MessageBody.MessageType()
++	if err != nil || (bodyType != msg.ClientHeader.MessageType &&
++		!(msg.ClientHeader.MessageType == chat1.MessageType_TLFNAME && bodyType == chat1.MessageType_NONE)) {
++		return errMinimalistUnsupported
++	}
++	switch msg.ClientHeader.MessageType {
++	case chat1.MessageType_TEXT:
++		return validateMinimalistText(msg)
++	case chat1.MessageType_TLFNAME, chat1.MessageType_METADATA, chat1.MessageType_JOIN,
++		chat1.MessageType_LEAVE, chat1.MessageType_SYSTEM, chat1.MessageType_DELETE,
++		chat1.MessageType_DELETEHISTORY:
++		return nil
++	default:
++		return errMinimalistUnsupported
++	}
++}
+diff --git a/go/chat/minimalist_policy_test.go b/go/chat/minimalist_policy_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..61af23ec2b2dd5eef5f802865ac95d6b9b7c3ef4
+--- /dev/null
++++ b/go/chat/minimalist_policy_test.go
+@@ -0,0 +1,126 @@
++//go:build minimalist
++
++package chat
++
++import (
++	"context"
++	"strings"
++	"testing"
++
++	"github.com/keybase/client/go/protocol/chat1"
++	"github.com/keybase/client/go/protocol/keybase1"
++)
++
++func minimalistTextMessage(body string) chat1.MessagePlaintext {
++	return chat1.MessagePlaintext{
++		ClientHeader: chat1.MessageClientHeader{
++			Conv:        chat1.ConversationIDTriple{TopicType: chat1.TopicType_CHAT},
++			MessageType: chat1.MessageType_TEXT,
++		},
++		MessageBody: chat1.NewMessageBodyWithText(chat1.MessageText{Body: body}),
++	}
++}
++
++func TestMinimalistTextBoundary(t *testing.T) {
++	for _, body := range []string{"hello", "hello\nworld", "/giphy dogs", "\n/flip", "18:00:00", "<b>plain</b>", ":custom-emoji:", "+1XLM@alice", "https://giphy.com/test"} {
++		if err := validateMinimalistText(minimalistTextMessage(body)); err != nil {
++			t.Errorf("safe literal text rejected: %q: %v", body, err)
++		}
++	}
++	for _, body := range []string{"", " \n ", "hello 😀", "hello\tworld", "bad\x1b[31m", strings.Repeat("a", 10001)} {
++		if err := validateMinimalistText(minimalistTextMessage(body)); err == nil {
++			t.Errorf("unsafe text accepted: %q", body)
++		}
++	}
++}
++
++func TestMinimalistRejectsTypedExtrasAndPublicTopics(t *testing.T) {
++	cases := []func(*chat1.MessagePlaintext){
++		func(m *chat1.MessagePlaintext) { m.ClientHeader.TlfPublic = true },
++		func(m *chat1.MessagePlaintext) { m.ClientHeader.Conv.TopicType = chat1.TopicType_DEV },
++		func(m *chat1.MessagePlaintext) { m.ClientHeader.MessageType = chat1.MessageType_ATTACHMENT },
++		func(m *chat1.MessagePlaintext) { m.ClientHeader.EphemeralMetadata = &chat1.MsgEphemeralMetadata{} },
++		func(m *chat1.MessagePlaintext) {
++			m.MessageBody = chat1.NewMessageBodyWithText(chat1.MessageText{Body: "hello", LiveLocation: &chat1.LiveLocation{}})
++		},
++		func(m *chat1.MessagePlaintext) {
++			m.MessageBody = chat1.NewMessageBodyWithText(chat1.MessageText{Body: "hello", Payments: []chat1.TextPayment{{}}})
++		},
++		func(m *chat1.MessagePlaintext) {
++			m.MessageBody = chat1.NewMessageBodyWithText(chat1.MessageText{Body: "hello", Emojis: map[string]chat1.HarvestedEmoji{"custom": {}}})
++		},
++	}
++	for i, mutate := range cases {
++		m := minimalistTextMessage("hello")
++		mutate(&m)
++		if err := validateMinimalistText(m); err == nil {
++			t.Errorf("case %d accepted", i)
++		}
++		// These fail before any credentials, contexts, or service callbacks are touched.
++		server := &Server{}
++		if _, err := server.PostLocal(context.Background(), chat1.PostLocalArg{Msg: m}); err == nil {
++			t.Errorf("PostLocal case %d accepted", i)
++		}
++		if _, err := server.PostLocalNonblock(context.Background(), chat1.PostLocalNonblockArg{Msg: m}); err == nil {
++			t.Errorf("PostLocalNonblock case %d accepted", i)
++		}
++	}
++}
++
++func TestMinimalistInternalConversationControlMessagesRemainAvailable(t *testing.T) {
++	for _, m := range []chat1.MessagePlaintext{
++		{ClientHeader: chat1.MessageClientHeader{Conv: chat1.ConversationIDTriple{TopicType: chat1.TopicType_CHAT}, MessageType: chat1.MessageType_TLFNAME}},
++		{ClientHeader: chat1.MessageClientHeader{Conv: chat1.ConversationIDTriple{TopicType: chat1.TopicType_CHAT}, MessageType: chat1.MessageType_METADATA}, MessageBody: chat1.NewMessageBodyWithMetadata(chat1.MessageConversationMetadata{ConversationTitle: "general"})},
++		{ClientHeader: chat1.MessageClientHeader{Conv: chat1.ConversationIDTriple{TopicType: chat1.TopicType_CHAT}, MessageType: chat1.MessageType_JOIN}, MessageBody: chat1.NewMessageBodyWithJoin(chat1.MessageJoin{})},
++	} {
++		if err := validateMinimalistSend(m, nil); err != nil {
++			t.Errorf("required control rejected: %v", err)
++		}
++		if err := validateMinimalistText(m); err == nil {
++			t.Error("internal control allowed through user text RPC")
++		}
++	}
++}
++
++func TestMinimalistOutboxAndVerifiedConversationBoundary(t *testing.T) {
++	media := minimalistTextMessage("hello")
++	media.ClientHeader.MessageType = chat1.MessageType_ATTACHMENT
++	media.MessageBody = chat1.NewMessageBodyWithAttachment(chat1.MessageAttachment{})
++	if err := validateMinimalistSend(media, nil); err == nil {
++		t.Error("old media outbox item accepted")
++	}
++	if _, err := (&BlockingSender{}).Prepare(context.Background(), media, chat1.ConversationMembersType_TEAM, nil, nil); err == nil {
++		t.Error("media reached sender callbacks")
++	}
++	conv := chat1.ConversationLocal{Info: chat1.ConversationInfoLocal{Triple: chat1.ConversationIDTriple{TopicType: chat1.TopicType_CHAT}, Visibility: keybase1.TLFVisibility_PUBLIC}}
++	if err := validateMinimalistSend(minimalistTextMessage("hello"), &conv); err == nil {
++		t.Error("forged private header sent to public conversation")
++	}
++	spoof := minimalistTextMessage("hello")
++	spoof.ClientHeader.MessageType = chat1.MessageType_TLFNAME
++	if err := validateMinimalistSend(spoof, nil); err == nil {
++		t.Error("body hidden behind control header accepted")
++	}
++}
++
++func TestMinimalistEmojiPathCannotReachSource(t *testing.T) {
++	msg := minimalistTextMessage(":custom-emoji:")
++	// A nil contextified sender would panic if it touched the emoji source.
++	result, err := (&BlockingSender{}).handleEmojis(context.Background(), nil, nil, msg, chat1.TopicType_CHAT)
++	if err != nil || result.MessageBody.Text().Body != ":custom-emoji:" {
++		t.Fatalf("literal emoji send changed: %v", err)
++	}
++}
++
++func TestMinimalistIncomingExtrasCannotReachMediaOrJourneyServices(t *testing.T) {
++	// These paths are reachable from a normal inbox/thread read or retention
++	// event; a nil context catches accidental service lookups immediately.
++	source := &baseConversationSource{}
++	thread := chat1.ThreadView{}
++	source.addConversationCards(context.Background(), nil, chat1.GetThreadReason_GENERAL, nil, nil, &thread)
++	source.addPendingPreviews(context.Background(), &thread)
++	source.DeleteAssets(context.Background(), nil, nil, []chat1.Asset{{}})
++	if len(thread.Messages) != 0 {
++		t.Fatal("incoming decoration changed the thread")
++	}
++}
+diff --git a/go/chat/push.go b/go/chat/push.go
+index f2891bf960d1ac15f62cfa51fb54427a4c36dc28..c8419c6a2370b317ac4332b6d834727bc36c68e7 100644
+--- a/go/chat/push.go
++++ b/go/chat/push.go
+@@ -568,7 +568,7 @@ func (g *PushHandler) Activity(ctx context.Context, m gregor.OutOfBandMessage) (
+ 			}
+ 
+ 			// Coin flip manager can completely handle the incoming message
+-			if g.G().CoinFlipManager.MaybeInjectFlipMessage(ctx, nm.Message, nm.InboxVers, uid, nm.ConvID,
++			if !libkb.IsMinimalistBuild && g.G().CoinFlipManager.MaybeInjectFlipMessage(ctx, nm.Message, nm.InboxVers, uid, nm.ConvID,
+ 				nm.TopicType) {
+ 				g.Debug(ctx, "chat activity: flip message handled, early out")
+ 				return nil
+@@ -598,6 +598,12 @@ func (g *PushHandler) Activity(ctx context.Context, m gregor.OutOfBandMessage) (
+ 				nm.Message, nm.MaxMsgs); err != nil {
+ 				g.Debug(ctx, "chat activity: unable to update inbox: %v", err)
+ 			}
++			// The minimalist frontend polls the verified JSON thread API. Retain
++			// inbox/cache/version updates, but do not invoke rich UI presentation,
++			// notification snippets, reply decoration, or attachment URL generation.
++			if libkb.IsMinimalistBuild {
++				return nil
++			}
+ 			// Add on reply information if we have it
+ 			if pushErr == nil {
+ 				decmsg, pushErr = g.getReplyMessage(ctx, uid, conv, decmsg)
+diff --git a/go/chat/sender.go b/go/chat/sender.go
+index dfd7c0449b31eedab3dd6073444a35d24ad9aee9..89580288e3cff57ebf59f9fd41cf45b45c9e207e 100644
+--- a/go/chat/sender.go
++++ b/go/chat/sender.go
+@@ -593,6 +593,9 @@ func (s *BlockingSender) handleReplyTo(ctx context.Context, uid gregor1.UID, con
+ func (s *BlockingSender) handleEmojis(ctx context.Context, uid gregor1.UID,
+ 	convID chat1.ConversationID, msg chat1.MessagePlaintext, topicType chat1.TopicType,
+ ) (chat1.MessagePlaintext, error) {
++	if libkb.IsMinimalistBuild {
++		return msg, nil
++	}
+ 	if topicType != chat1.TopicType_CHAT {
+ 		return msg, nil
+ 	}
+@@ -825,6 +828,9 @@ func (s *BlockingSender) Prepare(ctx context.Context, plaintext chat1.MessagePla
+ 	membersType chat1.ConversationMembersType, conv *chat1.ConversationLocal,
+ 	inopts *chat1.SenderPrepareOptions,
+ ) (res types.SenderPrepareResult, err error) {
++	if err := validateMinimalistSend(plaintext, conv); err != nil {
++		return res, err
++	}
+ 	if plaintext.ClientHeader.MessageType == chat1.MessageType_NONE {
+ 		return res, fmt.Errorf("cannot send message without type")
+ 	}
+@@ -874,9 +880,11 @@ func (s *BlockingSender) Prepare(ctx context.Context, plaintext chat1.MessagePla
+ 		msg.MessageBody = body
+ 
+ 		// Handle reply to
+-		if msg, err = s.handleReplyTo(ctx, uid, convID, msg, opts.ReplyTo); err != nil {
+-			s.Debug(ctx, "Prepare: error processing reply: %s", err)
+-			return res, err
++		if !libkb.IsMinimalistBuild {
++			if msg, err = s.handleReplyTo(ctx, uid, convID, msg, opts.ReplyTo); err != nil {
++				s.Debug(ctx, "Prepare: error processing reply: %s", err)
++				return res, err
++			}
+ 		}
+ 
+ 		// Handle cross team emoji
+@@ -944,9 +952,11 @@ func (s *BlockingSender) Prepare(ctx context.Context, plaintext chat1.MessagePla
+ 	// handle mentions
+ 	var atMentions []gregor1.UID
+ 	var chanMention chat1.ChannelMention
+-	if msg, atMentions, chanMention, err = s.handleMentions(ctx, uid, msg, conv); err != nil {
+-		s.Debug(ctx, "Prepare: error handling mentions: %s", err)
+-		return res, err
++	if !libkb.IsMinimalistBuild {
++		if msg, atMentions, chanMention, err = s.handleMentions(ctx, uid, msg, conv); err != nil {
++			s.Debug(ctx, "Prepare: error handling mentions: %s", err)
++			return res, err
++		}
+ 	}
+ 
+ 	// encrypt the message
+@@ -1170,6 +1180,9 @@ func (s *BlockingSender) Send(ctx context.Context, convID chat1.ConversationID,
+ 		s.Debug(ctx, "Send: error getting conversation metadata: %v", err)
+ 		return nil, nil, err
+ 	}
++	if err := validateMinimalistSend(msg, &conv); err != nil {
++		return nil, nil, err
++	}
+ 	s.Debug(ctx, "Send: uid: %s in conversation %s (tlfName: %s) with status: %v", sender,
+ 		conv.GetConvID(), conv.Info.TlfName, conv.ReaderInfo.Status)
+ 
+@@ -1320,7 +1333,7 @@ func (s *BlockingSender) Send(ctx context.Context, convID chat1.ConversationID,
+ 		s.Debug(ctx, "Send: failed to update inbox: %s", err)
+ 	}
+ 	// Send up to frontend
+-	if cerr == nil && boxed.GetMessageType() != chat1.MessageType_LEAVE {
++	if !libkb.IsMinimalistBuild && cerr == nil && boxed.GetMessageType() != chat1.MessageType_LEAVE {
+ 		unboxedMsg, err = NewReplyFiller(s.G()).FillSingle(ctx, boxed.ClientHeader.Sender, convID,
+ 			unboxedMsg)
+ 		if err != nil {
+@@ -1336,7 +1349,7 @@ func (s *BlockingSender) Send(ctx context.Context, convID chat1.ConversationID,
+ 		s.G().ActivityNotifier.Activity(ctx, boxed.ClientHeader.Sender, conv.GetTopicType(), &activity,
+ 			chat1.ChatActivitySource_LOCAL)
+ 	}
+-	if conv.GetTopicType() == chat1.TopicType_CHAT {
++	if !libkb.IsMinimalistBuild && conv.GetTopicType() == chat1.TopicType_CHAT {
+ 		// Unfurl
+ 		go s.G().Unfurler.UnfurlAndSend(globals.BackgroundChatCtx(ctx, s.G()), boxed.ClientHeader.Sender,
+ 			convID, unboxedMsg)
+diff --git a/go/chat/server.go b/go/chat/server.go
+index dd465a2622ff096be161b8b377f6215a15697ea6..bf246d7a9ac504f673d8f1ad17ca2df0abe9de3a 100644
+--- a/go/chat/server.go
++++ b/go/chat/server.go
+@@ -772,6 +772,12 @@ func (h *Server) SetConversationStatusLocal(ctx context.Context, arg chat1.SetCo
+ 
+ // PostLocal implements keybase.chatLocal.postLocal protocol.
+ func (h *Server) PostLocal(ctx context.Context, arg chat1.PostLocalArg) (res chat1.PostLocalRes, err error) {
++	if err := validateMinimalistText(arg.Msg); err != nil {
++		return res, err
++	}
++	if libkb.IsMinimalistBuild && arg.ReplyTo != nil {
++		return res, errMinimalistUnsupported
++	}
+ 	var identBreaks []keybase1.TLFIdentifyFailure
+ 	ctx = globals.ChatCtx(ctx, h.G(), arg.IdentifyBehavior, &identBreaks, h.identNotifier)
+ 	defer h.Trace(ctx, &err, "PostLocal")()
+@@ -782,14 +788,16 @@ func (h *Server) PostLocal(ctx context.Context, arg chat1.PostLocalArg) (res cha
+ 	}
+ 
+ 	// Check for any slash command hits for an execute
+-	if handled, err := h.G().CommandsSource.AttemptBuiltinCommand(ctx, uid, arg.ConversationID,
+-		arg.Msg.ClientHeader.TlfName, arg.Msg.MessageBody, arg.ReplyTo); handled {
+-		h.Debug(ctx, "PostLocal: handled slash command with error: %s", err)
+-		return res, nil
++	if !libkb.IsMinimalistBuild {
++		if handled, err := h.G().CommandsSource.AttemptBuiltinCommand(ctx, uid, arg.ConversationID,
++			arg.Msg.ClientHeader.TlfName, arg.Msg.MessageBody, arg.ReplyTo); handled {
++			h.Debug(ctx, "PostLocal: handled slash command with error: %s", err)
++			return res, nil
++		}
+ 	}
+ 
+ 	// Run Stellar UI on any payments in the body
+-	if !arg.SkipInChatPayments {
++	if !libkb.IsMinimalistBuild && !arg.SkipInChatPayments {
+ 		if arg.Msg.MessageBody, err = h.runStellarSendUI(ctx, arg.SessionID, uid, arg.ConversationID,
+ 			arg.Msg.MessageBody, arg.ReplyTo); err != nil {
+ 			return res, err
+@@ -1143,6 +1151,12 @@ func (h *Server) GenerateOutboxID(ctx context.Context) (res chat1.OutboxID, err
+ }
+ 
+ func (h *Server) PostLocalNonblock(ctx context.Context, arg chat1.PostLocalNonblockArg) (res chat1.PostLocalNonblockRes, err error) {
++	if err := validateMinimalistText(arg.Msg); err != nil {
++		return res, err
++	}
++	if libkb.IsMinimalistBuild && arg.ReplyTo != nil {
++		return res, errMinimalistUnsupported
++	}
+ 	var identBreaks []keybase1.TLFIdentifyFailure
+ 	ctx = globals.ChatCtx(ctx, h.G(), arg.IdentifyBehavior, &identBreaks, h.identNotifier)
+ 	defer h.Trace(ctx, &err, "PostLocalNonblock")()
+@@ -1159,13 +1173,15 @@ func (h *Server) PostLocalNonblock(ctx context.Context, arg chat1.PostLocalNonbl
+ 	}
+ 
+ 	// Check for any slash command hits for an execute
+-	if handled, err := h.G().CommandsSource.AttemptBuiltinCommand(ctx, uid, arg.ConversationID,
+-		arg.Msg.ClientHeader.TlfName, arg.Msg.MessageBody, arg.ReplyTo); handled {
+-		h.Debug(ctx, "PostLocalNonblock: handled slash command with error: %s", err)
+-		return res, nil
++	if !libkb.IsMinimalistBuild {
++		if handled, err := h.G().CommandsSource.AttemptBuiltinCommand(ctx, uid, arg.ConversationID,
++			arg.Msg.ClientHeader.TlfName, arg.Msg.MessageBody, arg.ReplyTo); handled {
++			h.Debug(ctx, "PostLocalNonblock: handled slash command with error: %s", err)
++			return res, nil
++		}
+ 	}
+ 
+-	if !arg.SkipInChatPayments {
++	if !libkb.IsMinimalistBuild && !arg.SkipInChatPayments {
+ 		// Determine if the messages contains any Stellar payments, and execute
+ 		// them if so
+ 		if arg.Msg.MessageBody, err = h.runStellarSendUI(ctx, arg.SessionID, uid, arg.ConversationID,
+diff --git a/go/client/chat_api_version_handler.go b/go/client/chat_api_version_handler.go
+index e6545a6bccf6a58862845b21902d0f1d4069067c..9911b76ce5fc4f67206863f7161411b38c56f2a6 100644
+--- a/go/client/chat_api_version_handler.go
++++ b/go/client/chat_api_version_handler.go
+@@ -5,6 +5,8 @@ package client
+ 
+ import (
+ 	"context"
++	"errors"
++	"github.com/keybase/client/go/libkb"
+ 	"io"
+ )
+ 
+@@ -28,6 +30,13 @@ func (d *ChatAPIVersionHandler) handle(ctx context.Context, c Call, w io.Writer)
+ }
+ 
+ func (d *ChatAPIVersionHandler) handleV1(ctx context.Context, c Call, w io.Writer) error {
++	if libkb.IsMinimalistBuild {
++		switch c.Method {
++		case "list", "read", "send", "newconv", "listconvsonname", "join", "mark", "getunfurlsettings", "setunfurlsettings":
++		default:
++			return errors.New("method disabled in minimalist build")
++		}
++	}
+ 	switch c.Method {
+ 	case methodList:
+ 		return d.handler.ListV1(ctx, c, w)
+diff --git a/go/client/cmd_chat.go b/go/client/cmd_chat.go
+index 205f9e23cdb7b71720ce86e71d2760c77754a8fe..bf045abd4598e12bf7137db7e64d477e2b43bd80 100644
+--- a/go/client/cmd_chat.go
++++ b/go/client/cmd_chat.go
+@@ -12,6 +12,9 @@ import (
+ )
+ 
+ func NewCmdChat(cl *libcmdline.CommandLine, g *libkb.GlobalContext) cli.Command {
++	if libkb.IsMinimalistBuild {
++		return cli.Command{Name: "chat", Usage: "Private ASCII chat API", Subcommands: []cli.Command{newCmdChatAPI(cl, g)}}
++	}
+ 	subcommands := []cli.Command{
+ 		newCmdChatAddToChannel(cl, g),
+ 		newCmdChatRemoveFromChannel(cl, g),
+diff --git a/go/client/commands_common.go b/go/client/commands_common.go
+index 04b40e507ca5e9ac21b4dcc3ef6db164f1b2487b..90d737430eaf29dccee39c8f23c5bbb1dca95f60 100644
+--- a/go/client/commands_common.go
++++ b/go/client/commands_common.go
+@@ -13,6 +13,12 @@ import (
+ )
+ 
+ func GetCommands(cl *libcmdline.CommandLine, g *libkb.GlobalContext) []cli.Command {
++	if libkb.IsMinimalistBuild {
++		return []cli.Command{
++			NewCmdChat(cl, g), NewCmdLogin(cl, g), NewCmdLogout(cl, g),
++			NewCmdSignup(cl, g), NewCmdVersion(cl, g), NewCmdWhoami(cl, g),
++		}
++	}
+ 	ret := []cli.Command{
+ 		NewCmdAccount(cl, g),
+ 		NewCmdAPICall(cl, g),
+diff --git a/go/client/minimalist_test.go b/go/client/minimalist_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..ca95fdf5dcb101fb86e3196f69fca3968a9bc1fb
+--- /dev/null
++++ b/go/client/minimalist_test.go
+@@ -0,0 +1,53 @@
++//go:build minimalist
++
++package client
++
++import (
++	"bytes"
++	"context"
++	"io"
++	"os"
++	"strings"
++	"testing"
++
++	"github.com/keybase/client/go/libkb"
++	"github.com/keybase/client/go/protocol/keybase1"
++)
++
++func TestMinimalistMobileProvisioningDisplaysPhraseWithoutQRCode(t *testing.T) {
++	tmpDir := t.TempDir()
++	t.Setenv("TMPDIR", tmpDir)
++	for _, role := range []libkb.KexRole{libkb.KexRoleProvisioner, libkb.KexRoleProvisionee} {
++		var plain, unescaped bytes.Buffer
++		p := ProvisionUI{role: role, parent: &UI{outputWriter: &plain, unescapedOutputWriter: &unescaped}}
++		const phrase = "synthetic verification phrase"
++		_, err := p.DisplayAndPromptSecret(context.Background(), keybase1.DisplayAndPromptSecretArg{
++			OtherDeviceType: keybase1.DeviceType_MOBILE,
++			Phrase:          phrase,
++		})
++		if err != nil || !strings.Contains(plain.String(), phrase) {
++			t.Fatalf("mobile provisioning phrase missing for role %v: %v", role, err)
++		}
++		if unescaped.Len() != 0 || strings.Contains(plain.String(), "PNG") || strings.Contains(plain.String(), "QR Code") {
++			t.Fatalf("mobile provisioning rendered a QR code for role %v", role)
++		}
++		for _, b := range plain.Bytes() {
++			if b > 127 {
++				t.Fatal("non-ASCII provisioning output")
++			}
++		}
++	}
++	entries, err := os.ReadDir(tmpDir)
++	if err != nil || len(entries) != 0 {
++		t.Fatalf("provisioning wrote a secret image: entries=%v err=%v", entries, err)
++	}
++}
++
++func TestMinimalistAPIDeniesExtraFeaturesBeforeHandler(t *testing.T) {
++	handler := ChatAPIVersionHandler{}
++	for _, method := range []string{"attach", "download", "reaction", "emojiadd", "loadflip", "advertisecommands", "searchinbox", "delete", "unknown"} {
++		if err := handler.handleV1(context.Background(), Call{Method: method}, io.Discard); err == nil {
++			t.Fatalf("disabled API method reached handler: %s", method)
++		}
++	}
++}
+diff --git a/go/client/provision_ui.go b/go/client/provision_ui.go
+index 1be11bc82190b7b303078655ff95268a9da99b0a..192a02369b6ab6b8beffb97f83f49079f130b59f 100644
+--- a/go/client/provision_ui.go
++++ b/go/client/provision_ui.go
+@@ -208,17 +208,19 @@ func (p ProvisionUI) DisplayAndPromptSecret(ctx context.Context, arg keybase1.Di
+ 
+ 		// For mobile, show the QR code and the phrase, do not prompt:
+ 		if arg.OtherDeviceType == keybase1.DeviceType_MOBILE {
+-			encodings, err := qrcode.Encode([]byte(arg.Phrase))
+-			// ignoring any of these errors...phrase above will suffice.
+-			if err == nil {
+-				_ = p.parent.Output("Scan this QR Code with the keybase app on your mobile phone:\n\n")
+-				_, _ = p.parent.PrintfUnescaped("%s", encodings.Terminal)
+-				fname := filepath.Join(os.TempDir(), "keybase_qr.png")
+-				f, ferr := os.Create(fname)
+-				if ferr == nil {
+-					_, _ = f.Write(encodings.PNG)
+-					f.Close()
+-					p.parent.Printf("\nThere's also a PNG version in %s that might work better.\n\n", fname)
++			if !libkb.IsMinimalistBuild {
++				encodings, err := qrcode.Encode([]byte(arg.Phrase))
++				// ignoring any of these errors...phrase above will suffice.
++				if err == nil {
++					_ = p.parent.Output("Scan this QR Code with the keybase app on your mobile phone:\n\n")
++					_, _ = p.parent.PrintfUnescaped("%s", encodings.Terminal)
++					fname := filepath.Join(os.TempDir(), "keybase_qr.png")
++					f, ferr := os.Create(fname)
++					if ferr == nil {
++						_, _ = f.Write(encodings.PNG)
++						f.Close()
++						p.parent.Printf("\nThere's also a PNG version in %s that might work better.\n\n", fname)
++					}
+ 				}
+ 			}
+ 
+@@ -247,7 +249,7 @@ func (p ProvisionUI) DisplayAndPromptSecret(ctx context.Context, arg keybase1.Di
+ 		_ = p.parent.Output("\tkeybase device add\n\n")
+ 		_ = p.parent.Output("It will then prompt you for the verification code above.\n\n")
+ 
+-		if arg.OtherDeviceType == keybase1.DeviceType_MOBILE {
++		if arg.OtherDeviceType == keybase1.DeviceType_MOBILE && !libkb.IsMinimalistBuild {
+ 			encodings, err := qrcode.Encode([]byte(arg.Phrase))
+ 			// ignoring any of these errors...phrase above will suffice.
+ 			if err == nil {
+diff --git a/go/keybase/main.go b/go/keybase/main.go
+index 1bc9f44661bf9db1573af1b88a0a67931c942bab..60d0172a3c168f1bc22ed79f53af9315eedd8e26 100644
+--- a/go/keybase/main.go
++++ b/go/keybase/main.go
+@@ -32,6 +32,10 @@ var cmd libcmdline.Command
+ var errParseArgs = errors.New("failed to parse command line arguments")
+ 
+ func handleQuickVersion() bool {
++	if libkb.IsMinimalistBuild && len(os.Args) == 2 && os.Args[1] == "--minimalist-build-info" {
++		fmt.Println(`{"policy":1,"upstream":"f60f2ff97e35f2287375d95eafa7cad77d872072","storage_namespace":"keybase-minimalist","media":false,"unfurls":false,"payments":false,"commands":false}`)
++		return true
++	}
+ 	if len(os.Args) == 3 && os.Args[1] == "version" && os.Args[2] == "-S" {
+ 		fmt.Printf("%s\n", libkb.VersionString())
+ 		return true
+diff --git a/go/libkb/env.go b/go/libkb/env.go
+index bf9ce81010a9d5a93eb5757c2bbaa77beeff6af9..8f49a15af47cb2ca46be0c4a64b60e8011f01cb6 100644
+--- a/go/libkb/env.go
++++ b/go/libkb/env.go
+@@ -1763,6 +1763,9 @@ func (e *Env) GetStoredSecretServiceBaseName() string {
+ 
+ func (e *Env) GetStoredSecretServiceName() string {
+ 	serviceName := e.GetStoredSecretServiceBaseName()
++	if IsMinimalistBuild {
++		serviceName += "-minimalist"
++	}
+ 	if e.Test.Devel {
+ 		// Append DevelName so that tests won't clobber each
+ 		// other's keychain entries on shutdown.
+diff --git a/go/libkb/home.go b/go/libkb/home.go
+index b23d03613b877c6c486a97b24e14429f1e0df225..e22a0ea5c4940b978b504cc8b653c8b85f66f7c9 100644
+--- a/go/libkb/home.go
++++ b/go/libkb/home.go
+@@ -409,6 +409,9 @@ func (w Win32) MobileSharedHome(emptyOk bool) string {
+ func NewHomeFinder(appName string, getHomeFromCmd ConfigGetter, getHomeFromConfig ConfigGetter, getMobileSharedHome ConfigGetter,
+ 	osname string, getRunMode RunModeGetter, getLog LogGetter, getenv EnvGetter,
+ ) HomeFinder {
++	if IsMinimalistBuild {
++		appName = "keybase-minimalist"
++	}
+ 	base := Base{appName, getHomeFromCmd, getHomeFromConfig, getMobileSharedHome, getRunMode, getLog, getenv}
+ 	switch runtimeGroup(osname) {
+ 	case keybase1.RuntimeGroup_WINDOWSLIKE:
+diff --git a/go/libkb/minimalist_disabled.go b/go/libkb/minimalist_disabled.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..b3ef743db09d18f265c9f2dfaf41ced972f218eb
+--- /dev/null
++++ b/go/libkb/minimalist_disabled.go
+@@ -0,0 +1,5 @@
++//go:build !minimalist
++
++package libkb
++
++const IsMinimalistBuild = false
+diff --git a/go/libkb/minimalist_enabled.go b/go/libkb/minimalist_enabled.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..da1217d0bcf36bec14a8ba9f2980f39e3543766f
+--- /dev/null
++++ b/go/libkb/minimalist_enabled.go
+@@ -0,0 +1,6 @@
++//go:build minimalist
++
++package libkb
++
++// IsMinimalistBuild is a compile-time policy, never a remotely changeable setting.
++const IsMinimalistBuild = true
+diff --git a/go/libkb/minimalist_test.go b/go/libkb/minimalist_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..b51dd378f8214de0db02512bd37233bf3d8f96cc
+--- /dev/null
++++ b/go/libkb/minimalist_test.go
+@@ -0,0 +1,20 @@
++//go:build minimalist
++
++package libkb
++
++import (
++	"strings"
++	"testing"
++)
++
++func TestMinimalistSeparateStorageNamespace(t *testing.T) {
++	env := newEnv(AppConfig{HomeDir: t.TempDir(), RunMode: ProductionRunMode}, nil, "darwin", nil)
++	for _, path := range []string{env.GetConfigDir(), env.GetDataDir(), env.GetRuntimeDir()} {
++		if !strings.Contains(strings.ToLower(path), "keybase-minimalist") {
++			t.Fatalf("storage not isolated: %s", path)
++		}
++	}
++	if env.GetStoredSecretServiceName() != "keybase-minimalist" {
++		t.Fatal("Keychain namespace is not isolated")
++	}
++}
+diff --git a/go/service/main.go b/go/service/main.go
+index ae3b46e07e6d31df10edb2694db18f9105ede461..8958aa6c0cde5cd2e2d958bd91192cc09f744bba 100644
+--- a/go/service/main.go
++++ b/go/service/main.go
+@@ -97,7 +97,7 @@ type Shutdowner interface {
+ func NewService(g *libkb.GlobalContext, isDaemon bool) *Service {
+ 	chatG := globals.NewChatContextified(&globals.ChatContext{})
+ 	allG := globals.NewContext(g, chatG.ChatG())
+-	return &Service{
++	svc := &Service{
+ 		Contextified:     libkb.NewContextified(g),
+ 		ChatContextified: chatG,
+ 		isDaemon:         isDaemon,
+@@ -111,10 +111,15 @@ func NewService(g *libkb.GlobalContext, isDaemon bool) *Service {
+ 		tlfUpgrader:      tlfupgrade.NewBackgroundTLFUpdater(g),
+ 		trackerLoader:    NewTrackerLoader(g),
+ 		teamUpgrader:     teams.NewUpgrader(),
+-		walletState:      stellar.NewWalletState(g, remote.NewRemoteNet(g)),
+ 		offlineRPCCache:  offline.NewRPCCache(g),
+-		httpSrv:          manager.NewSrv(g),
+ 	}
++	// These constructors start workers and a loopback HTTP listener. The
++	// minimalist service has no wallet or media endpoints that need them.
++	if !libkb.IsMinimalistBuild {
++		svc.walletState = stellar.NewWalletState(g, remote.NewRemoteNet(g))
++		svc.httpSrv = manager.NewSrv(g)
++	}
++	return svc
+ }
+ 
+ func (d *Service) GetStartChannel() <-chan struct{} {
+@@ -122,6 +127,9 @@ func (d *Service) GetStartChannel() <-chan struct{} {
+ }
+ 
+ func (d *Service) RegisterProtocols(srv *rpc.Server, xp rpc.Transporter, connID libkb.ConnectionID, logReg *logRegister) (err error) {
++	if libkb.IsMinimalistBuild {
++		return d.registerMinimalistProtocols(srv, xp, connID, logReg)
++	}
+ 	g := d.G()
+ 	cg := globals.NewContext(g, d.ChatG())
+ 	contactsProv := NewCachedContactsProvider(g)
+@@ -340,6 +348,9 @@ func (d *Service) Run() (err error) {
+ }
+ 
+ func (d *Service) SetupCriticalSubServices() error {
++	if libkb.IsMinimalistBuild {
++		return d.setupMinimalistCriticalServices()
++	}
+ 	allG := globals.NewContext(d.G(), d.ChatG())
+ 	mctx := d.MetaContext(context.TODO())
+ 	d.G().RuntimeStats = runtimestats.NewRunner(allG)
+@@ -358,6 +369,10 @@ func (d *Service) SetupCriticalSubServices() error {
+ }
+ 
+ func (d *Service) RunBackgroundOperations(uir *UIRouter) {
++	if libkb.IsMinimalistBuild {
++		d.runMinimalistBackgroundOperations(uir)
++		return
++	}
+ 	// These are all background-ish operations that the service performs.
+ 	// We should revisit these on mobile, or at least, when mobile apps are
+ 	// backgrounded.
+@@ -426,8 +441,10 @@ func (d *Service) startChatModules() {
+ 		g.InboxSource.Start(context.Background(), uid)
+ 		g.Indexer.Start(globals.ChatCtx(context.Background(), g,
+ 			keybase1.TLFIdentifyBehavior_CHAT_SKIP, nil, nil), uid)
+-		g.ArchiveRegistry.Start(globals.ChatCtx(context.Background(), g,
+-			keybase1.TLFIdentifyBehavior_CHAT_SKIP, nil, nil), uid)
++		if !libkb.IsMinimalistBuild {
++			g.ArchiveRegistry.Start(globals.ChatCtx(context.Background(), g,
++				keybase1.TLFIdentifyBehavior_CHAT_SKIP, nil, nil), uid)
++		}
+ 		g.CoinFlipManager.Start(context.Background(), uid)
+ 		g.TeamMentionLoader.Start(context.Background(), uid)
+ 		g.LiveLocationTracker.Start(context.Background(), uid)
+@@ -435,7 +452,9 @@ func (d *Service) startChatModules() {
+ 		g.UIInboxLoader.Start(context.Background(), uid)
+ 		g.PushShutdownHook(d.stopChatModules)
+ 	}
+-	d.purgeOldChatAttachmentData()
++	if !libkb.IsMinimalistBuild {
++		d.purgeOldChatAttachmentData()
++	}
+ }
+ 
+ func (d *Service) stopChatModules(m libkb.MetaContext) error {
+@@ -447,17 +466,25 @@ func (d *Service) stopChatModules(m libkb.MetaContext) error {
+ 	<-d.ChatG().EphemeralTracker.Stop(m.Ctx())
+ 	<-d.ChatG().InboxSource.Stop(m.Ctx())
+ 	<-d.ChatG().Indexer.Stop(m.Ctx())
+-	<-d.ChatG().ArchiveRegistry.Stop(m.Ctx())
++	if !libkb.IsMinimalistBuild {
++		<-d.ChatG().ArchiveRegistry.Stop(m.Ctx())
++	}
+ 	<-d.ChatG().CoinFlipManager.Stop(m.Ctx())
+ 	<-d.ChatG().TeamMentionLoader.Stop(m.Ctx())
+ 	<-d.ChatG().LiveLocationTracker.Stop(m.Ctx())
+ 	<-d.ChatG().BotCommandManager.Stop(m.Ctx())
+ 	<-d.ChatG().UIInboxLoader.Stop(m.Ctx())
+-	<-d.ChatG().JourneyCardManager.Stop(m.Ctx())
++	if !libkb.IsMinimalistBuild {
++		<-d.ChatG().JourneyCardManager.Stop(m.Ctx())
++	}
+ 	return nil
+ }
+ 
+ func (d *Service) SetupChatModules(ri func() chat1.RemoteInterface) {
++	if libkb.IsMinimalistBuild {
++		d.setupMinimalistChatModules(ri)
++		return
++	}
+ 	g := globals.NewContext(d.G(), d.ChatG())
+ 	if ri == nil {
+ 		ri = d.gregor.GetClient
+@@ -628,21 +655,27 @@ func (d *Service) startupGregor() {
+ 
+ 		// Add default handlers
+ 		userHandler := newUserHandler(d.G())
+-		userHandler.PushUserBlockedHandler(d.home)
++		if !libkb.IsMinimalistBuild {
++			userHandler.PushUserBlockedHandler(d.home)
++		}
+ 
+ 		d.gregor.PushHandler(userHandler)
+ 		// TODO -- get rid of this?
+ 		d.gregor.PushHandler(newRekeyLogHandler(d.G()))
+ 
+ 		d.gregor.PushHandler(newTeamHandler(d.G(), d.badger))
+-		d.gregor.PushHandler(stellargregor.New(d.G(), d.walletState))
+-		d.gregor.PushHandler(d.home)
++		if !libkb.IsMinimalistBuild {
++			d.gregor.PushHandler(stellargregor.New(d.G(), d.walletState))
++			d.gregor.PushHandler(d.home)
++		}
+ 		d.gregor.PushHandler(newEKHandler(d.G()))
+ 		d.gregor.PushHandler(newTeambotHandler(d.G()))
+-		d.gregor.PushHandler(newAvatarGregorHandler(d.G(), d.G().GetAvatarLoader()))
+-		d.gregor.PushHandler(newPhoneNumbersGregorHandler(d.G()))
+-		d.gregor.PushHandler(newEmailsGregorHandler(d.G()))
+-		d.gregor.PushHandler(newKBFSFavoritesHandler(d.G()))
++		if !libkb.IsMinimalistBuild {
++			d.gregor.PushHandler(newAvatarGregorHandler(d.G(), d.G().GetAvatarLoader()))
++			d.gregor.PushHandler(newPhoneNumbersGregorHandler(d.G()))
++			d.gregor.PushHandler(newEmailsGregorHandler(d.G()))
++			d.gregor.PushHandler(newKBFSFavoritesHandler(d.G()))
++		}
+ 
+ 		// Connect to gregord
+ 		if gcErr := d.tryGregordConnect(); gcErr != nil {
+diff --git a/go/service/minimalist.go b/go/service/minimalist.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..71b02d9270af04d94e8721e109b149828c691df5
+--- /dev/null
++++ b/go/service/minimalist.go
+@@ -0,0 +1,233 @@
++package service
++
++import (
++	"context"
++	"errors"
++	"time"
++
++	"github.com/keybase/client/go/chat"
++	"github.com/keybase/client/go/chat/globals"
++	"github.com/keybase/client/go/chat/storage"
++	"github.com/keybase/client/go/chat/types"
++	"github.com/keybase/client/go/ephemeral"
++	"github.com/keybase/client/go/externals"
++	"github.com/keybase/client/go/libkb"
++	"github.com/keybase/client/go/protocol/chat1"
++	"github.com/keybase/client/go/protocol/gregor1"
++	"github.com/keybase/client/go/protocol/keybase1"
++	"github.com/keybase/client/go/pvl"
++	"github.com/keybase/client/go/runtimestats"
++	"github.com/keybase/client/go/teambot"
++	"github.com/keybase/client/go/teams"
++	"github.com/keybase/go-framed-msgpack-rpc/rpc"
++)
++
++var errMinimalistDisabled = errors.New("feature disabled in minimalist build")
++
++// No attachment, wallet, filesystem, browser helper, search, bot or debugging
++// protocol is registered. Unknown methods fail before their request is decoded.
++func (d *Service) registerMinimalistProtocols(srv *rpc.Server, xp rpc.Transporter, connID libkb.ConnectionID, logReg *logRegister) error {
++	g := d.G()
++	cg := globals.NewContext(g, d.ChatG())
++	protocols := minimalistProtocolSet(
++		NewConfigHandler(xp, connID, g, d), NewLoginHandler(xp, g),
++		NewSignupHandler(xp, g), NewLogHandler(xp, logReg, g),
++		CancelingProtocol(g, minimalistChatProtocol(newChatLocalHandler(xp, cg, d.gregor)), libkb.RPCCancelerReasonAll))
++	for _, protocol := range protocols {
++		if err := srv.Register(protocol); err != nil {
++			return err
++		}
++	}
++	return nil
++}
++
++// The official CLI account flow uses these RPC entry points. Its engines
++// perform identity, device and key operations directly within the service;
++// registering the unrelated User/Device administration protocols is unnecessary.
++func minimalistProtocolSet(config keybase1.ConfigInterface, login keybase1.LoginInterface,
++	signup keybase1.SignupInterface, log keybase1.LogInterface, chatProtocol rpc.Protocol) []rpc.Protocol {
++	return []rpc.Protocol{
++		minimalistMethods(keybase1.ConfigProtocol(config), "getCurrentStatus", "getConfig", "helloIAm", "getAllProvisionedUsernames", "getRememberPassphrase"),
++		minimalistMethods(keybase1.LoginProtocol(login), "login", "logout"),
++		minimalistMethods(keybase1.SignupProtocol(signup), "signup", "inviteRequest", "getInvitationCode"),
++		minimalistMethods(keybase1.LogProtocol(log), "registerLogger"),
++		chatProtocol,
++	}
++}
++
++func minimalistChatProtocol(handler chat1.LocalInterface) rpc.Protocol {
++	return minimalistMethods(chat1.LocalProtocol(handler),
++		"getThreadLocal", "getInboxAndUnboxLocal", "getInboxAndUnboxUILocal", "getInboxSummaryForCLILocal", "getConversationForCLILocal",
++		"findConversationsLocal", "newConversationLocal", "getTLFConversationsLocal", "joinConversationByIDLocal",
++		"markAsReadLocal", "postLocal", "getUnfurlSettings", "saveUnfurlSettings")
++}
++
++func minimalistMethods(protocol rpc.Protocol, names ...string) rpc.Protocol {
++	methods := make(map[string]rpc.ServeHandlerDescription, len(names))
++	for _, name := range names {
++		if method, ok := protocol.Methods[name]; ok {
++			methods[name] = method
++		} else {
++			panic("minimalist protocol contains unknown method: " + protocol.Name + "." + name)
++		}
++	}
++	protocol.Methods = methods
++	return protocol
++}
++
++func (d *Service) setupMinimalistCriticalServices() error {
++	g := d.G()
++	mctx := d.MetaContext(context.Background())
++	g.RuntimeStats = runtimestats.NewRunner(globals.NewContext(g, d.ChatG()))
++	teams.ServiceInit(g)
++	pvl.NewPvlSourceAndInstall(g)
++	externals.NewParamProofStoreAndInstall(g)
++	externals.NewExternalURLStoreAndInstall(g)
++	ephemeral.ServiceInit(mctx)
++	teambot.ServiceInit(mctx)
++	g.SetAvatarLoader(minimalistAvatarLoader{})
++	return nil
++}
++
++func (d *Service) runMinimalistBackgroundOperations(uir *UIRouter) {
++	ctx := context.Background()
++	d.tryLogin(ctx, libkb.LoginAttemptOnline)
++	d.chatOutboxPurgeCheck()
++	d.hourlyChecks()
++	d.slowChecks()
++	d.startupGregor()
++	d.startChatModules()
++	d.addGlobalHooks()
++	d.configureRekey(uir)
++	// Preserve key rotation and team/merkle auditing; omit unrelated account
++	// recommendations, contacts, wallets, telemetry and home-screen polling.
++	d.runBackgroundPerUserKeyUpgrade()
++	d.runBackgroundPerUserKeyUpkeep()
++	d.runBackgroundBoxAuditRetry()
++	d.runBackgroundBoxAuditScheduler()
++	d.runTLFUpgrade()
++	d.runTeamUpgrader(ctx)
++	d.runMerkleAudit(ctx)
++}
++
++func (d *Service) setupMinimalistChatModules(ri func() chat1.RemoteInterface) {
++	g := globals.NewContext(d.G(), d.ChatG())
++	if ri == nil {
++		ri = d.gregor.GetClient
++	}
++	storage.SetupGlobalHooks(g)
++	g.CtxFactory = chat.NewCtxFactory(g)
++	g.Badger = d.badger
++	inbox := chat.NewInboxSource(g, g.Env.GetInboxSourceType(), ri)
++	g.InboxSource = inbox
++	d.badger.SetLocalChatState(inbox)
++	chatStorage := storage.New(g, nil)
++	g.ConvSource = chat.NewConversationSource(g, g.Env.GetConvSourceType(), chat.NewBoxer(g), chatStorage, ri)
++	chatStorage.SetAssetDeleter(g.ConvSource)
++	g.Indexer = types.DummyIndexer{}
++	g.ServerCacheVersions = storage.NewServerVersions(g)
++	syncer := chat.NewSyncer(g)
++	g.Syncer = syncer
++	g.FetchRetrier = chat.NewFetchRetrier(g)
++	g.ConvLoader = chat.NewBackgroundConvLoader(g)
++	g.EphemeralPurger = chat.NewBackgroundEphemeralPurger(g)
++	g.EphemeralTracker = chat.NewEphemeralTracker(g)
++	g.AddLogoutHook(g.EphemeralTracker, "EphemeralTracker")
++	g.AddDbNukeHook(g.EphemeralTracker, "EphemeralTracker")
++	g.ActivityNotifier = chat.NewNotifyRouterActivityRouter(g)
++	d.badger.SetInboxVersionSource(storage.NewInboxVersionSource(g))
++	g.PushHandler = chat.NewPushHandler(g)
++	g.AttachmentUploader = types.DummyAttachmentUploader{}
++	g.AttachmentURLSrv = types.DummyAttachmentHTTPSrv{}
++	sender := chat.NewBlockingSender(g, chat.NewBoxer(g), ri)
++	g.MessageDeliverer = chat.NewDeliverer(g, sender, d.gregor)
++	g.TeamChannelSource = chat.NewTeamChannelSource(g)
++	g.AddLogoutHook(g.TeamChannelSource, "TeamChannelSource")
++	g.AddDbNukeHook(g.TeamChannelSource, "TeamChannelSource")
++	g.StellarLoader = types.DummyStellarLoader{}
++	g.StellarSender = types.DummyStellarSender{}
++	g.Unfurler = minimalistUnfurler{}
++	g.CommandsSource = minimalistCommands{}
++	g.CoinFlipManager = types.DummyCoinFlipManager{}
++	g.TeamMentionLoader = types.DummyTeamMentionLoader{}
++	g.ExternalAPIKeySource = types.DummyExternalAPIKeySource{}
++	g.LiveLocationTracker = minimalistLocation{}
++	g.BotCommandManager = types.DummyBotCommandManager{}
++	g.UIInboxLoader = types.DummyUIInboxLoader{}
++	g.UIThreadLoader = types.DummyUIThreadLoader{}
++	g.ParticipantsSource = chat.NewCachingParticipantSource(g, ri)
++	g.EmojiSource = types.DummyEmojiSource{}
++	syncer.RegisterOfflinable(g.InboxSource)
++	syncer.RegisterOfflinable(g.FetchRetrier)
++	syncer.RegisterOfflinable(g.MessageDeliverer)
++	g.AddUserChangedHandler(chat.NewIdentifyChangedHandler(g))
++	g.ChatHelper = chat.NewHelper(g, ri)
++}
++
++type minimalistUnfurler struct{ types.DummyUnfurler }
++
++func (minimalistUnfurler) GetSettings(context.Context, gregor1.UID) (chat1.UnfurlSettings, error) {
++	return chat1.UnfurlSettings{Mode: chat1.UnfurlMode_NEVER}, nil
++}
++func (minimalistUnfurler) SetSettings(_ context.Context, _ gregor1.UID, settings chat1.UnfurlSettings) error {
++	if settings.Mode != chat1.UnfurlMode_NEVER {
++		return errMinimalistDisabled
++	}
++	return nil
++}
++func (minimalistUnfurler) SetMode(_ context.Context, _ gregor1.UID, mode chat1.UnfurlMode) error {
++	if mode != chat1.UnfurlMode_NEVER {
++		return errMinimalistDisabled
++	}
++	return nil
++}
++
++type minimalistCommands struct{}
++
++func (minimalistCommands) ListCommands(context.Context, gregor1.UID, types.ConversationCommandsSpec) (chat1.ConversationCommandGroups, error) {
++	return chat1.ConversationCommandGroups{}, nil
++}
++func (minimalistCommands) GetBuiltins(context.Context) []chat1.BuiltinCommandGroup { return nil }
++func (minimalistCommands) GetBuiltinCommandType(context.Context, types.ConversationCommandsSpec) chat1.ConversationBuiltinCommandTyp {
++	return chat1.ConversationBuiltinCommandTyp(0)
++}
++func (minimalistCommands) AttemptBuiltinCommand(context.Context, gregor1.UID, chat1.ConversationID, string, chat1.MessageBody, *chat1.MessageID) (bool, error) {
++	return false, nil
++}
++func (minimalistCommands) PreviewBuiltinCommand(context.Context, gregor1.UID, chat1.ConversationID, string, string) {
++}
++
++type minimalistLocation struct{}
++
++func (minimalistLocation) Start(context.Context, gregor1.UID) {}
++func (minimalistLocation) Stop(context.Context) chan struct{} {
++	done := make(chan struct{})
++	close(done)
++	return done
++}
++func (minimalistLocation) GetCurrentPosition(context.Context, chat1.ConversationID, chat1.MessageID) {
++}
++func (minimalistLocation) StartTracking(context.Context, chat1.ConversationID, chat1.MessageID, time.Time) {
++}
++func (minimalistLocation) LocationUpdate(context.Context, chat1.Coordinate) {}
++func (minimalistLocation) GetCoordinates(context.Context, types.LiveLocationKey) []chat1.Coordinate {
++	return nil
++}
++func (minimalistLocation) GetEndTime(context.Context, types.LiveLocationKey) *time.Time { return nil }
++func (minimalistLocation) ActivelyTracking(context.Context) bool                        { return false }
++func (minimalistLocation) StopAllTracking(context.Context)                              {}
++
++type minimalistAvatarLoader struct{}
++
++func (minimalistAvatarLoader) LoadUsers(libkb.MetaContext, []string, []keybase1.AvatarFormat) (keybase1.LoadAvatarsRes, error) {
++	return keybase1.LoadAvatarsRes{}, errMinimalistDisabled
++}
++func (minimalistAvatarLoader) LoadTeams(libkb.MetaContext, []string, []keybase1.AvatarFormat) (keybase1.LoadAvatarsRes, error) {
++	return keybase1.LoadAvatarsRes{}, errMinimalistDisabled
++}
++func (minimalistAvatarLoader) ClearCacheForName(libkb.MetaContext, string, []keybase1.AvatarFormat) error {
++	return nil
++}
++func (minimalistAvatarLoader) OnDbNuke(libkb.MetaContext) error       { return nil }
++func (minimalistAvatarLoader) StartBackgroundTasks(libkb.MetaContext) {}
++func (minimalistAvatarLoader) StopBackgroundTasks(libkb.MetaContext)  {}
+diff --git a/go/service/minimalist_test.go b/go/service/minimalist_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..37eb1a122dc721ba407637c5f7b87a66f9d2beed
+--- /dev/null
++++ b/go/service/minimalist_test.go
+@@ -0,0 +1,96 @@
++//go:build minimalist
++
++package service
++
++import (
++	"context"
++	"testing"
++
++	"github.com/keybase/client/go/chat/attachments"
++	"github.com/keybase/client/go/chat/utils"
++	"github.com/keybase/client/go/libkb"
++	"github.com/keybase/client/go/protocol/chat1"
++	"github.com/keybase/go-framed-msgpack-rpc/rpc"
++)
++
++func TestMinimalistConstructorDoesNotStartMediaOrWalletServices(t *testing.T) {
++	tc := libkb.SetupTest(t, "minimalist-constructor", 1)
++	defer tc.Cleanup()
++	svc := NewService(tc.G, false)
++	if svc.httpSrv != nil || svc.walletState != nil {
++		t.Fatal("minimalist constructor initialized an HTTP listener or wallet worker")
++	}
++}
++
++func TestMinimalistChatRPCSurface(t *testing.T) {
++	p := minimalistChatProtocol(nil)
++	for _, required := range []string{"postLocal", "getInboxAndUnboxUILocal", "getThreadLocal", "newConversationLocal", "joinConversationByIDLocal", "markAsReadLocal", "saveUnfurlSettings"} {
++		if _, ok := p.Methods[required]; !ok {
++			t.Fatalf("required CLI method missing: %s", required)
++		}
++	}
++	for _, forbidden := range []string{"postFileAttachmentLocal", "DownloadAttachmentLocal", "DownloadFileAttachmentLocal", "makePreview", "makeAudioPreview", "getGiphyResults", "locationUpdate", "advertiseBotCommands", "forwardMessage", "postLocalNonblock", "getThreadNonblock", "addEmoji"} {
++		if _, ok := p.Methods[forbidden]; ok {
++			t.Fatalf("unexpected exposed method: %s", forbidden)
++		}
++	}
++	if len(p.Methods) != 13 {
++		t.Fatalf("review new chat methods: count=%d", len(p.Methods))
++	}
++}
++
++func TestMinimalistUnknownRPCConfigurationFailsClosed(t *testing.T) {
++	defer func() {
++		if recover() == nil {
++			t.Fatal("missing method was silently accepted")
++		}
++	}()
++	minimalistMethods(rpc.Protocol{Name: "example", Methods: map[string]rpc.ServeHandlerDescription{}}, "missing")
++}
++
++func TestMinimalistPreviewPreferenceCannotBeEnabled(t *testing.T) {
++	u := minimalistUnfurler{}
++	settings, err := u.GetSettings(context.Background(), nil)
++	if err != nil || settings.Mode != chat1.UnfurlMode_NEVER {
++		t.Fatal("preview policy not fixed to never")
++	}
++	if u.SetMode(context.Background(), nil, chat1.UnfurlMode_ALWAYS) == nil {
++		t.Fatal("enabled previews")
++	}
++	if u.SetSettings(context.Background(), nil, chat1.UnfurlSettings{Mode: chat1.UnfurlMode_ALWAYS}) == nil {
++		t.Fatal("enabled previews through settings")
++	}
++	if u.SetMode(context.Background(), nil, chat1.UnfurlMode_NEVER) != nil {
++		t.Fatal("safe CLI settings rejected")
++	}
++}
++
++func TestMinimalistNativePreviewNeverTouchesInput(t *testing.T) {
++	// A nil reader would panic in a media decoder. Every type must be rejected
++	// before a read, even when called outside the RPC allowlist.
++	for _, mediaType := range []string{"image/jpeg", "image/gif", "image/png", "video/mp4", "audio/mpeg", "image/x-icon"} {
++		preview, err := attachments.Preview(context.Background(), utils.DebugLabeler{}, nil, mediaType, "untrusted", nil)
++		if err == nil || preview != nil {
++			t.Fatalf("media not rejected: %s", mediaType)
++		}
++	}
++}
++
++func TestMinimalistCompleteProtocolSurface(t *testing.T) {
++	protocols := minimalistProtocolSet(nil, nil, nil, nil, minimalistChatProtocol(nil))
++	expected := map[string]int{"keybase.1.config": 5, "keybase.1.login": 2, "keybase.1.signup": 3, "keybase.1.log": 1, "chat.1.local": 13}
++	if len(protocols) != len(expected) {
++		t.Fatalf("unexpected protocol count: %d", len(protocols))
++	}
++	for _, protocol := range protocols {
++		count, ok := expected[protocol.Name]
++		if !ok || len(protocol.Methods) != count {
++			t.Errorf("unexpected protocol surface %s: %d", protocol.Name, len(protocol.Methods))
++		}
++		for _, forbidden := range []string{"uploadUserAvatar", "accountDelete", "deprovision", "deviceAdd", "perfLogPoint"} {
++			if _, found := protocol.Methods[forbidden]; found {
++				t.Errorf("exposed %s.%s", protocol.Name, forbidden)
++			}
++		}
++	}
++}

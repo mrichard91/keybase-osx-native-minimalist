@@ -2,14 +2,14 @@ import AppKit
 import MinimalCore
 
 @MainActor
-final class ChatWindow: NSWindow, NSTableViewDataSource, NSTableViewDelegate {
+class ChatWindow: NSWindow, NSTableViewDataSource, NSTableViewDelegate {
     let sidebar = NSTableView()
     let transcript = PlainTextView()
     let composer = PlainTextView()
     let transcriptScroll = NSScrollView()
     let titleLabel = NSTextField(labelWithString: "A quieter place to talk.")
     let subtitleLabel = NSTextField(labelWithString: "Direct messages and groups. Just text.")
-    let statusLabel = NSTextField(labelWithString: "Connect to your official Keybase service to begin.")
+    let statusLabel = NSTextField(labelWithString: "Start service, set up your account, then connect.")
     let accountLabel = NSTextField(labelWithString: "KEYBASE / MINIMAL")
     let hintLabel = NSTextField(labelWithString: "Return to send  /  Shift-Return for a new line  /  ASCII only")
     let sendButton = NSButton(title: "Send", target: nil, action: nil)
@@ -21,6 +21,7 @@ final class ChatWindow: NSWindow, NSTableViewDataSource, NSTableViewDelegate {
     let loginButton = NSButton(title: "Account...", target: nil, action: nil)
     var conversations: [Conversation] = []
     var onSelection: ((Conversation) -> Void)?
+    private var restoringSelection = false
 
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 760),
@@ -113,11 +114,29 @@ final class ChatWindow: NSWindow, NSTableViewDataSource, NSTableViewDelegate {
             stack.bottomAnchor.constraint(equalTo: parent.bottomAnchor, constant: -inset)])
     }
 
-    func setWelcomeText() {
-        transcript.string = "YOUR CONVERSATIONS, WITHOUT THE CLUTTER\n\nConnect to your existing Keybase account to see your direct messages and group channels.\n\nMessages are displayed as plain ASCII text. Emoji appear as :shortcodes:. Attachments and other non-text messages are replaced with notices.\n\nNo previews. No media. No clickable links.\n\nAccount setup uses the official Keybase command-line flow in a native text window. The Electron application does not need to be open."
+    func setWelcomeText(backend: BackendPresentation = .unselected) {
+        transcript.string = "YOUR CONVERSATIONS, WITHOUT THE CLUTTER\n\n" + backend.setupSteps + "\n\nMessages are displayed as plain ASCII text. Emoji appear as :shortcodes:. Attachments and other non-text messages are replaced with notices.\n\nNo previews, media, or clickable links in this window."
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { conversations.count }
+
+    func replaceConversations(_ items: [Conversation], selectedID: String?) {
+        // Reloading a sorted inbox can move a selected row. Restore identity
+        // without treating an intermediate row index as a user selection.
+        restoringSelection = true
+        defer { restoringSelection = false }
+        conversations = items
+        sidebar.reloadData()
+        if let row = items.firstIndex(where: { $0.id == selectedID }) {
+            sidebar.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        } else { sidebar.deselectAll(nil) }
+    }
+
+    var isTranscriptAtEnd: Bool {
+        transcriptScroll.contentView.bounds.maxY >= transcript.bounds.maxY - 30
+    }
+
+    var hasReadingFocus: Bool { isVisible && isKeyWindow && NSApp.isActive }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard conversations.indices.contains(row) else { return nil }
         let conversation = conversations[row]
@@ -130,7 +149,7 @@ final class ChatWindow: NSWindow, NSTableViewDataSource, NSTableViewDelegate {
         return stack
     }
     func tableViewSelectionDidChange(_ notification: Notification) {
-        guard conversations.indices.contains(sidebar.selectedRow) else { return }
+        guard !restoringSelection, conversations.indices.contains(sidebar.selectedRow) else { return }
         onSelection?(conversations[sidebar.selectedRow])
     }
 

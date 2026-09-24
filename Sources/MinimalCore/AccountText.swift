@@ -6,7 +6,10 @@ public enum AccountText {
     public static func responseData(_ value: String) -> Data? {
         guard value.utf8.count <= 1000,
               value.utf8.allSatisfy({ $0 >= 0x20 && $0 <= 0x7e }) else { return nil }
-        return Data((value + "\n").utf8)
+        // A terminal Return key is CR, including Keybase's raw-mode ReadLine
+        // and ReadPassword. The PTY's initial canonical ICRNL mode maps CR to
+        // LF for line-oriented readers; sending LF directly stalls raw prompts.
+        return Data((value + "\r").utf8)
     }
 }
 /// Discards all terminal-control sequences and non-ASCII bytes before AppKit sees

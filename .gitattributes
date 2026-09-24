@@ -1,0 +1,2 @@
+# Patch context includes leading spaces on blank lines. Applied source is checked by git apply.
+backend/patches/*.patch -whitespace

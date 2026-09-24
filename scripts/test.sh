@@ -8,3 +8,4 @@ if [ -d /Applications/Xcode.app/Contents/Developer ]; then
 fi
 xcrun swift test --build-system native --disable-sandbox
 python3 scripts/check-surface.py
+python3 -m unittest discover -s scripts/tests

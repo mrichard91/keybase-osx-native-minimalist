@@ -7,3 +7,6 @@ xcuserdata/
 .env
 *.key
 *.p12
+
+__pycache__/
+*.pyc

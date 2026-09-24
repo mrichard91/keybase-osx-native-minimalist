@@ -8,6 +8,8 @@
 // only system calls before execve; no Swift or Objective-C runs after fork.
 int kb_spawn_piped(const char *executable, char *const argv[], char *const envp[],
                    pid_t *pid, int *input, int *output, int *error_output);
+int kb_spawn_quiet(const char *executable, char *const argv[], char *const envp[],
+                   const char *working_directory, pid_t *pid);
 // action: 0 = login, 1 = signup, 2 = logout. No free-form command is accepted.
 int kb_spawn_account(const char *executable, int action, char *const envp[],
                      pid_t *pid, int *terminal);
@@ -20,5 +22,6 @@ int kb_process_peek(pid_t pid, int *exit_status);
 void kb_process_kill(pid_t pid);
 void kb_process_interrupt(pid_t pid);
 void kb_process_reap(pid_t pid);
+void kb_process_stop(pid_t pid, int graceful_signal, int grace_milliseconds);
 
 #endif

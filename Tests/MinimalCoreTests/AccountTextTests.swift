@@ -5,8 +5,8 @@ import CKeybaseProcess
 
 final class AccountTextTests: XCTestCase {
     func testResponseIsOneBoundedASCIILine() {
-        XCTAssertEqual(AccountText.responseData("paper key words 123"), Data("paper key words 123\n".utf8))
-        XCTAssertEqual(AccountText.responseData(""), Data([10]))
+        XCTAssertEqual(AccountText.responseData("paper key words 123"), Data("paper key words 123\r".utf8))
+        XCTAssertEqual(AccountText.responseData(""), Data([13]))
         for value in ["line\nbreak", "carriage\rreturn", "null\0byte", "tab\there", "é", "😀", String(repeating: "a", count: 1001)] {
             XCTAssertNil(AccountText.responseData(value))
         }

@@ -46,8 +46,8 @@ private actor FakeCommands {
 }
 
 final class KeybaseClientTests: XCTestCase {
-    private func client(_ commands: FakeCommands) -> KeybaseClient {
-        KeybaseClient(executable: URL(fileURLWithPath: "/test/keybase"), runner: { url, args, input, timeout, limit in
+    private func client(_ commands: FakeCommands, bundledBackend: Bool = false) -> KeybaseClient {
+        KeybaseClient(executable: URL(fileURLWithPath: "/test/keybase"), bundledBackend: bundledBackend, runner: { url, args, input, timeout, limit in
             try await commands.run(url, args, input, timeout, limit)
         })
     }
@@ -184,6 +184,26 @@ final class KeybaseClientTests: XCTestCase {
             let methods = try await commands.methods()
             XCTAssertTrue(methods.isEmpty)
         }
+    }
+
+    func testBundledBackendSendsLiteralASCIIWithoutOptionalServiceActions() async throws {
+        let body = "/literal 18:00:00 :custom-emoji: https://giphy.com/image 😀"
+        let commands = try FakeCommands([listResult([conversation()]), ["mode": "never"], ["id": 8]])
+        try await client(commands, bundledBackend: true).send(conversationID: testConversationID, body: body)
+        let methods = try await commands.methods()
+        XCTAssertEqual(methods, ["list", "getunfurlsettings", "send"])
+        let requests = try await commands.requests()
+        let options = (requests.last!["params"] as! [String: Any])["options"] as! [String: Any]
+        XCTAssertEqual((options["message"] as! [String: Any])["body"] as? String,
+                       "/literal 18:00:00 :custom-emoji: https://giphy.com/image :grinning:")
+    }
+
+    func testBundledBackendUnexpectedPreviewModeFailsWithoutChangingAccountPreference() async throws {
+        let commands = try FakeCommands([["mode": "always"]])
+        do { try await client(commands, bundledBackend: true).prepareSecurity(); XCTFail("Unsafe backend accepted") }
+        catch { XCTAssertEqual(error as? KeybaseClientError, .previewsNotDisabled) }
+        let methods = try await commands.methods()
+        XCTAssertEqual(methods, ["getunfurlsettings"])
     }
 
     func testExistingTeamChannelJoinedByIDWithoutCreation() async throws {

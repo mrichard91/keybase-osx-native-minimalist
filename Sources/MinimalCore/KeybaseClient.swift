@@ -6,11 +6,13 @@ public actor KeybaseClient {
     public typealias CommandRunner = @Sendable (URL, [String], Data?, TimeInterval, Int) async throws -> ProcessOutput
     private let executable: URL
     private let runner: CommandRunner
+    private let bundledBackend: Bool
     private var knownConversations: [String: Conversation] = [:]
     public static let arguments = ["--no-auto-fork", "--no-debug", "--app-start-mode", "minimalist"]
 
     public init(executable: URL) {
         self.executable = executable
+        self.bundledBackend = KeybaseExecutable.isBundled(executable)
         self.runner = { executable, arguments, input, timeout, limit in
             try KeybaseExecutable.validate(executable)
             return try await ProcessRunner.run(executable: executable, arguments: arguments, input: input,
@@ -19,9 +21,10 @@ public actor KeybaseClient {
     }
 
     /// Test seam: production callers always use the signature-verifying initializer.
-    init(executable: URL, runner: @escaping CommandRunner) {
+    init(executable: URL, bundledBackend: Bool = false, runner: @escaping CommandRunner) {
         self.executable = executable
         self.runner = runner
+        self.bundledBackend = bundledBackend
     }
 
     public func account() async throws -> String {
@@ -35,12 +38,13 @@ public actor KeybaseClient {
         return username
     }
 
-    /// The setting belongs to the official service and also affects other clients
-    /// using this local Keybase account. Verify it again immediately before sends.
+    /// The bundled backend fixes previews off without changing account settings.
+    /// Compatibility mode changes the official shared preference. Check before sends.
     public func prepareSecurity() async throws {
         let settings = try await api("getunfurlsettings") as? [String: Any]
         guard let mode = settings?["mode"] as? String else { throw KeybaseClientError.invalidReply }
         if mode != "never" {
+            guard !bundledBackend else { throw KeybaseClientError.previewsNotDisabled }
             guard let saved = try await api("setunfurlsettings", options: ["mode": "never", "whitelist": []]) as? Bool,
                   saved else { throw KeybaseClientError.previewsNotDisabled }
             let verified = try await api("getunfurlsettings") as? [String: Any]
@@ -78,29 +82,34 @@ public actor KeybaseClient {
     public func send(conversationID: String, body: String) async throws {
         try validateConversationID(conversationID)
         let plainBody = try ASCIIText.validateOutgoing(body)
-        guard !plainBody.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/") else {
-            throw KeybaseClientError.commandNotAllowed
-        }
-        // Official NEVER mode still auto-whitelists these domains, including
-        // giphy.com subdomains. Reject the domain text conservatively, including
-        // percent encodings, instead of maintaining a second URL parser.
-        var domainText = plainBody.lowercased()
-        for _ in 0..<3 {
-            if domainText.contains("giphy.com") || domainText.contains("keybasemaps") {
-                throw KeybaseClientError.automaticPreviewNotAllowed
+        // The bundled service treats these strings literally. The full official
+        // service performs optional actions while sending, so compatibility needs
+        // the extra conservative text restrictions below.
+        if !bundledBackend {
+            guard !plainBody.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/") else {
+                throw KeybaseClientError.commandNotAllowed
             }
-            guard let decoded = domainText.removingPercentEncoding, decoded != domainText else { break }
-            domainText = decoded.lowercased()
-        }
-        // Official EmojiSource.Harvest scans this grammar, even for a text send,
-        // and can download/re-upload custom emoji. Stock names cannot be shadowed
-        // without a # suffix. Reject every other match before invoking the service.
-        let emojiPattern = try NSRegularExpression(pattern: ":([^:\\s]+):")
-        let range = NSRange(plainBody.startIndex..<plainBody.endIndex, in: plainBody)
-        for match in emojiPattern.matches(in: plainBody, range: range) {
-            guard let matchedRange = Range(match.range, in: plainBody),
-                  ASCIIText.isKnownEmojiShortcode(String(plainBody[matchedRange])) else {
-                throw KeybaseClientError.customEmojiNotAllowed
+            // Official NEVER mode still auto-whitelists these domains, including
+            // giphy.com subdomains. Reject the domain text conservatively, including
+            // percent encodings, instead of maintaining a second URL parser.
+            var domainText = plainBody.lowercased()
+            for _ in 0..<3 {
+                if domainText.contains("giphy.com") || domainText.contains("keybasemaps") {
+                    throw KeybaseClientError.automaticPreviewNotAllowed
+                }
+                guard let decoded = domainText.removingPercentEncoding, decoded != domainText else { break }
+                domainText = decoded.lowercased()
+            }
+            // Official EmojiSource.Harvest scans this grammar, even for a text send,
+            // and can download/re-upload custom emoji. Stock names cannot be shadowed
+            // without a # suffix. Reject every other match before invoking the service.
+            let emojiPattern = try NSRegularExpression(pattern: ":([^:\\s]+):")
+            let range = NSRange(plainBody.startIndex..<plainBody.endIndex, in: plainBody)
+            for match in emojiPattern.matches(in: plainBody, range: range) {
+                guard let matchedRange = Range(match.range, in: plainBody),
+                      ASCIIText.isKnownEmojiShortcode(String(plainBody[matchedRange])) else {
+                    throw KeybaseClientError.customEmojiNotAllowed
+                }
             }
         }
         _ = try await refreshConversation(conversationID)

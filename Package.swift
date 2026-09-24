@@ -12,7 +12,8 @@ let package = Package(
         .target(name: "CKeybaseProcess", publicHeadersPath: "include"),
         .target(name: "MinimalCore", dependencies: ["CKeybaseProcess"], resources: [.process("Resources")]),
         .executableTarget(name: "MinimalKeybase", dependencies: ["MinimalCore", "CKeybaseProcess"]),
-        .testTarget(name: "MinimalCoreTests", dependencies: ["MinimalCore"])
+        .testTarget(name: "MinimalCoreTests", dependencies: ["MinimalCore"]),
+        .testTarget(name: "MinimalKeybaseTests", dependencies: ["MinimalKeybase", "MinimalCore"])
     ],
     swiftLanguageModes: [.v5]
 )

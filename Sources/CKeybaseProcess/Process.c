@@ -2,11 +2,13 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <spawn.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 static int prepare_fd(int fd) {
@@ -58,24 +60,42 @@ static void nonblocking(int fd) {
     fcntl(fd, F_SETNOSIGPIPE, 1);
 }
 
+static int spawn_native(const char *executable, char *const argv[], char *const envp[],
+                        int input, int output, int error_output, const char *directory,
+                        pid_t *pid) {
+    posix_spawn_file_actions_t actions;
+    posix_spawnattr_t attributes;
+    int result = posix_spawn_file_actions_init(&actions);
+    if (result) { errno = result; return -1; }
+    result = posix_spawnattr_init(&attributes);
+    if (result) { posix_spawn_file_actions_destroy(&actions); errno = result; return -1; }
+    sigset_t empty, defaults;
+    sigemptyset(&empty);
+    sigemptyset(&defaults);
+    sigaddset(&defaults, SIGINT); sigaddset(&defaults, SIGTERM); sigaddset(&defaults, SIGPIPE);
+    short flags = POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK |
+                  POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_CLOEXEC_DEFAULT;
+    if (!(result = posix_spawnattr_setflags(&attributes, flags)) &&
+        !(result = posix_spawnattr_setpgroup(&attributes, 0)) &&
+        !(result = posix_spawnattr_setsigmask(&attributes, &empty)) &&
+        !(result = posix_spawnattr_setsigdefault(&attributes, &defaults)) &&
+        !(result = posix_spawn_file_actions_adddup2(&actions, input, STDIN_FILENO)) &&
+        !(result = posix_spawn_file_actions_adddup2(&actions, output, STDOUT_FILENO)) &&
+        !(result = posix_spawn_file_actions_adddup2(&actions, error_output, STDERR_FILENO)) &&
+        (!directory || !(result = posix_spawn_file_actions_addchdir_np(&actions, directory))))
+        result = posix_spawn(pid, executable, &actions, &attributes, argv, envp);
+    posix_spawnattr_destroy(&attributes);
+    posix_spawn_file_actions_destroy(&actions);
+    if (result) { errno = result; return -1; }
+    return 0;
+}
+
 int kb_spawn_piped(const char *executable, char *const argv[], char *const envp[],
                    pid_t *pid, int *input, int *output, int *error_output) {
     int in[2] = {-1, -1}, out[2] = {-1, -1}, err[2] = {-1, -1};
     if (make_pipe(in) || make_pipe(out) || make_pipe(err)) goto failure;
-    int limit = descriptor_limit();
-    pid_t child = fork();
-    if (child == -1) goto failure;
-    if (child == 0) {
-        if (setpgid(0, 0) || dup2(in[0], STDIN_FILENO) == -1 ||
-            dup2(out[1], STDOUT_FILENO) == -1 || dup2(err[1], STDERR_FILENO) == -1)
-            _exit(126);
-        close_inherited(limit);
-        child_signals();
-        execve(executable, argv, envp);
-        const char message[] = "Unable to execute child process.\n";
-        write(STDERR_FILENO, message, sizeof(message) - 1);
-        _exit(127);
-    }
+    pid_t child;
+    if (spawn_native(executable, argv, envp, in[0], out[1], err[1], NULL, &child)) goto failure;
     close(in[0]); close(out[1]); close(err[1]);
     nonblocking(in[1]); nonblocking(out[0]); nonblocking(err[0]);
     *pid = child; *input = in[1]; *output = out[0]; *error_output = err[0];
@@ -87,6 +107,19 @@ failure: {
     if (err[0] >= 0) close(err[0]); if (err[1] >= 0) close(err[1]);
     errno = saved; return -1;
 }}
+
+int kb_spawn_quiet(const char *executable, char *const argv[], char *const envp[],
+                   const char *working_directory, pid_t *pid) {
+    int null_fd = open("/dev/null", O_RDWR | O_CLOEXEC);
+    if (null_fd < 0) return -1;
+    null_fd = prepare_fd(null_fd);
+    if (null_fd < 0) return -1;
+    int result = spawn_native(executable, argv, envp, null_fd, null_fd, null_fd, working_directory, pid);
+    int saved = errno;
+    close(null_fd);
+    errno = saved;
+    return result;
+}
 
 int kb_spawn_account(const char *executable, int action, char *const envp[],
                      pid_t *pid, int *terminal) {
@@ -110,11 +143,13 @@ int kb_spawn_account(const char *executable, int action, char *const envp[],
     if (slave < 0) { close(master); return -1; }
     struct termios attributes;
     if (tcgetattr(slave, &attributes)) { close(master); close(slave); return -1; }
-    // Canonical mode lets a plain native text field submit a complete response.
-    // Keep ALL responses out of the transcript, even when a user submits before
-    // the CLI has switched a prompt into password mode.
+    // Initial canonical mode maps a terminal Return (CR) to a line feed. The
+    // official CLI switches to raw mode, where its line reader requires CR.
+    // Disable kernel echo before any input. Keybase's raw prompt reader manages
+    // its own display and suppresses software echo for password prompts.
     attributes.c_lflag |= ICANON | ISIG;
     attributes.c_lflag &= ~(ECHO | ECHONL);
+    attributes.c_iflag &= ~(IGNCR | INLCR);
     attributes.c_iflag |= ICRNL;
     attributes.c_oflag |= OPOST | ONLCR;
     attributes.c_cc[VERASE] = 127;
@@ -185,4 +220,27 @@ void kb_process_interrupt(pid_t pid) {
 void kb_process_reap(pid_t pid) {
     if (pid <= 0) return;
     while (waitpid(pid, NULL, 0) == -1 && errno == EINTR) {}
+}
+
+void kb_process_stop(pid_t pid, int graceful_signal, int grace_milliseconds) {
+    if (pid <= 0) return;
+    int observed_status;
+    if (kb_process_peek(pid, &observed_status) < 0) return;
+    if (grace_milliseconds > 0) {
+        kill(-pid, graceful_signal);
+        kill(pid, graceful_signal);
+        struct timespec start, now, interval = {.tv_sec = 0, .tv_nsec = 10000000};
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        while (1) {
+            int status;
+            if (kb_process_peek(pid, &status) != 0) break;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            long long elapsed = (now.tv_sec - start.tv_sec) * 1000LL + (now.tv_nsec - start.tv_nsec) / 1000000;
+            if (elapsed >= grace_milliseconds) break;
+            nanosleep(&interval, NULL);
+        }
+    }
+    // Keep the leader unreaped until the group is killed, reserving its PID.
+    kb_process_kill(pid);
+    kb_process_reap(pid);
 }

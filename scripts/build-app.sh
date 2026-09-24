@@ -6,9 +6,14 @@ export SWIFTPM_MODULECACHE_OVERRIDE="${TMPDIR:-/tmp}/keybase-minimal-swift-cache
 if [ -d /Applications/Xcode.app/Contents/Developer ]; then
     export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 fi
+bash scripts/build-backend.sh
 xcrun swift build --build-system native --disable-sandbox -c release
 APP="$PWD/build/Keybase Minimal.app"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Helpers"
+cp "$PWD/build/backend/keybase-minimalist" "$APP/Contents/Helpers/keybase-minimalist"
+cp "$PWD/build/backend/backend.json" "$APP/Contents/Resources/backend.json"
+cp "$PWD/build/backend/THIRD-PARTY-NOTICES.txt" "$APP/Contents/Resources/THIRD-PARTY-NOTICES.txt"
+cp "$PWD/LICENSE" "$APP/Contents/Resources/PROJECT-LICENSE.txt"
 BIN_DIR="$(xcrun swift build --build-system native --disable-sandbox -c release --show-bin-path)"
 cp "$BIN_DIR/KeybaseMinimal" "$APP/Contents/MacOS/KeybaseMinimal"
 for resource in "$BIN_DIR"/*.bundle; do
@@ -29,6 +34,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
+<key>KeybaseMinimalistBundledBackend</key><true/>
 </dict></plist>
 PLIST
 # Local builds are ad-hoc signed with hardened runtime, without exception entitlements.

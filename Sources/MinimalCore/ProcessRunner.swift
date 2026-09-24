@@ -33,6 +33,11 @@ public enum ProcessRunnerError: LocalizedError {
 }
 
 public enum ProcessRunner {
+    /// Call during application termination after controllers request their own
+    /// graceful shutdown. This synchronously stops all remaining owned commands
+    /// and prevents queued work from starting another process afterward.
+    public static func shutdownAll() { ChildProcessRegistry.shared.shutdown() }
+
     /// Construct, rather than filter, the environment. In particular no KEYBASE,
     /// DYLD, proxy, certificate-path, plugin, shell, or debug overrides propagate.
     public static var environment: [String: String] {
@@ -73,19 +78,22 @@ public enum ProcessRunner {
         if cancellation.isCancelled { throw CancellationError() }
         var pid: pid_t = 0
         var inputFD: Int32 = -1, outputFD: Int32 = -1, errorFD: Int32 = -1
-        let result = withCStringArray([executable.path] + arguments) { argv in
-            withCStringArray(environment.map { "\($0.key)=\($0.value)" }) { env in
-                executable.path.withCString { path in
-                    kb_spawn_piped(path, argv, env, &pid, &inputFD, &outputFD, &errorFD)
+        let child = try ChildProcessRegistry.shared.launch {
+            if cancellation.isCancelled { throw CancellationError() }
+            let result = withCStringArray([executable.path] + arguments) { argv in
+                withCStringArray(environment.map { "\($0.key)=\($0.value)" }) { env in
+                    executable.path.withCString { path in
+                        kb_spawn_piped(path, argv, env, &pid, &inputFD, &outputFD, &errorFD)
+                    }
                 }
             }
+            guard result == 0 else { throw ProcessRunnerError.launchFailed }
+            return OwnedChildProcess(pid: pid)
         }
-        guard result == 0 else { throw ProcessRunnerError.launchFailed }
-        var reaped = false
         defer {
             if inputFD >= 0 { close(inputFD) }
             close(outputFD); close(errorFD)
-            if !reaped { kb_process_kill(pid); kb_process_reap(pid) }
+            child.stop()
         }
         var stdout = Data(), stderr = Data(), written = 0
         var status: Int32 = 0
@@ -126,9 +134,11 @@ public enum ProcessRunner {
             // Keep the child unreaped until the pipe buffers have been drained.
             // Once it exits, poll returns immediately; a final full drain captures
             // the last bytes without waiting on inherited descriptors indefinitely.
-            let state = kb_process_peek(pid, &status)
-            if state != 0 {
-                if state < 0 { throw ProcessRunnerError.launchFailed }
+            switch child.observe() {
+            case .stopped: throw CancellationError()
+            case .running: break
+            case .exited(let exitStatus):
+                status = exitStatus
                 for stream in 0..<2 {
                     let fd = stream == 0 ? outputFD : errorFD
                     while true {
@@ -145,9 +155,7 @@ public enum ProcessRunner {
                 }
                 // The leader remains unreaped, reserving its PID while any
                 // descendants holding our pipes are terminated as one group.
-                kb_process_kill(pid)
-                kb_process_reap(pid)
-                reaped = true
+                child.stop()
                 return ProcessOutput(stdout: stdout, stderr: stderr, status: status)
             }
             var descriptors = [pollfd(fd: outputFD, events: Int16(POLLIN), revents: 0),

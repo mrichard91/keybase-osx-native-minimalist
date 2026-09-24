@@ -1,7 +1,14 @@
 # Official Keybase components
 
-The app delegates to the locally installed, signed Keybase CLI and Go service.
-It does not fork cryptography or embed the Electron UI.
+The packaged app builds and bundles the official Keybase Go source at the full
+revision in `backend/upstream.json`, with the reviewed local
+`backend/patches/minimalist.patch`. It preserves official cryptography and account
+flows, and does not embed Electron. See [backend build instructions](../backend/README.md)
+and [the policy changes](BACKEND-MINIMIZATION.md).
+
+An unpackaged developer run may use the installed official signed CLI in clearly
+identified compatibility mode. The original-service behavior below documents why
+that mode needs additional text restrictions.
 
 - [Official client repository](https://github.com/keybase/client)
 - [Keybase Go client at tested version f60f2ff97e](https://github.com/keybase/client/tree/f60f2ff97e/go)
@@ -13,8 +20,8 @@ Local inspection on 2026-09-24 found official CLI version
 `6.6.3-20260603142618+f60f2ff97e`, code-signing identifier `keybase`, and team
 identifier `99229SGT5K`. Runtime signature validation authenticates the installed
 official signer, not a fixed version. Users remain responsible for installing
-official supported updates. A source-built unsigned CLI is deliberately not
-accepted by the production app.
+official supported updates. Arbitrary source-built CLI paths are not accepted. The packaged helper is
+accepted only through the signed-bundle manifest and hash-validation path.
 
 The offline emoji map has its own pinned upstream revision and full license
 notice in `Sources/MinimalCore/Resources`; its data is bundled, never fetched
@@ -53,7 +60,7 @@ status are rejected. The service explicitly normalizes an empty thread to `[]`,
 while its inbox conversation slice can encode as `null`. `unread` in a conversation
 is a non-optional JSON Boolean.
 
-## Text can trigger service actions
+## Full-service behavior and compatibility restrictions
 
 The official `PostLocal` path is not a passive text transport. These restrictions
 are intentional defenses against extra processing observed in the pinned source:
@@ -82,7 +89,7 @@ are intentional defenses against extra processing observed in the pinned source:
   and [maps constant](https://github.com/keybase/client/blob/f60f2ff97e35f2287375d95eafa7cad77d872072/go/chat/types/types.go#L39)
   must be reviewed again when upstream behavior changes.
 
-## Remaining service surface
+## Full-service background surface
 
 The official service starts background chat modules including indexing, coin
 flips, live-location tracking, bot commands, and loaders for logged-in users.
@@ -107,6 +114,7 @@ those existing jobs. It does not guarantee that the entire official service
 cannot process or download media.
 
 The JSON API does not provide an atomic per-message switch disabling all command,
-emoji, payment, and preview processing. Stronger isolation requires a separately
-audited minimal official-service build or a narrower upstream RPC, while retaining
-the established identity and encryption implementation.
+emoji, payment, and preview processing. The bundled backend supplies a compile-time policy and isolated namespace to
+remove these optional execution paths. It still needs independent review and
+live compatibility acceptance; the established identity and encryption
+implementation is retained.

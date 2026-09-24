@@ -3,11 +3,7 @@ import Darwin
 import CKeybaseProcess
 import MinimalCore
 
-enum AccountAction: Int32 {
-    case login = 0
-    case signup = 1
-    case logout = 2
-
+private extension AccountAction {
     var title: String {
         switch self {
         case .login: return "Log in to Keybase"
@@ -17,7 +13,8 @@ enum AccountAction: Int32 {
     }
 }
 
-/// A plain text view of the official CLI's account flow, backed by a real PTY.
+/// A plain text view of Keybase's account flow, backed by a real PTY. The bundled
+/// build uses official Keybase source with the project's minimalist patch.
 /// No terminal emulator, link handler, shell, or password arguments are involved.
 @MainActor
 final class AccountWindowController: NSWindowController, NSWindowDelegate {
@@ -27,10 +24,10 @@ final class AccountWindowController: NSWindowController, NSWindowDelegate {
     private let transcript = PlainTextView()
     private let response = NSSecureTextField()
     private let responseLabel = NSTextField(labelWithString: "Response (input is hidden)")
-    private let statusLabel = NSTextField(labelWithString: "Starting official Keybase account flow...")
+    private let statusLabel = NSTextField(labelWithString: "Starting Keybase account flow...")
     private let submitButton = NSButton(title: "Send response", target: nil, action: nil)
     private let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
-    private var session: AccountTerminalSession?
+    private var session: AccountSession?
     private var finished = false
     private var windowClosed = false
     private var completionSent = false
@@ -59,20 +56,23 @@ final class AccountWindowController: NSWindowController, NSWindowDelegate {
         window?.makeFirstResponder(response)
         guard session == nil, !finished else { return }
         do {
-            session = try AccountTerminalSession(executable: executable, action: action,
+            session = try AccountSession(executable: executable, action: action,
                 onOutput: { [weak self] output in self?.append(output) },
-                onEcho: { [weak self] enabled in
-                    self?.responseLabel.stringValue = enabled ? "Response (input is hidden)" : "Secret response (input is hidden)"
-                },
+                // Raw terminal mode disables kernel echo for ordinary prompts
+                // too, so it cannot identify whether a prompt requests a secret.
+                onEcho: { _ in },
                 onFinish: { [weak self] status, error in self?.complete(status: status, error: error) })
-            statusLabel.stringValue = "Follow the official Keybase prompts below."
+            statusLabel.stringValue = "Follow the Keybase prompts below."
         } catch { complete(status: nil, error: error.localizedDescription) }
     }
 
     private func buildInterface() {
         guard let content = window?.contentView else { return }
-        let explanation = NSTextField(wrappingLabelWithString:
-            "Keybase handles your password, device approval, and paper key. Responses are hidden, have no history, and must contain printable ASCII. This window keeps no account transcript on disk.")
+        let accountContext = KeybaseExecutable.isBundled(executable) ?
+            "Use your existing Keybase account to provision this app as a new device. Its backend uses official Keybase source with a minimalist patch, separate account storage, and separate Keychain entries." :
+            "The official Keybase command uses your existing local Keybase service and account. Keybase handles your password, device approval, and paper key."
+        let explanation = NSTextField(wrappingLabelWithString: accountContext +
+            " Responses are hidden and must contain printable ASCII. This window keeps no response history or transcript on disk.")
         explanation.textColor = .secondaryLabelColor
         explanation.font = .systemFont(ofSize: 12)
         let scroll = NSScrollView()
@@ -200,146 +200,5 @@ final class AccountWindowController: NSWindowController, NSWindowDelegate {
         transcript.string = ""
         windowClosed = true
         session?.shutdown()
-    }
-}
-
-private final class AccountTerminalSession: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "minimalist.keybase.account", qos: .userInitiated)
-    private var pid: pid_t = 0
-    private var fd: Int32 = -1
-    private var timer: DispatchSourceTimer?
-    private var pending = Data()
-    private var outputCount = 0
-    private let filter = TerminalTextFilter()
-    private var lastEcho: Bool?
-    private var stoppingAt: DispatchTime?
-    private let deadline = DispatchTime.now() + 1800
-    private let onOutput: @MainActor (String) -> Void
-    private let onEcho: @MainActor (Bool) -> Void
-    private let onFinish: @MainActor (Int32?, String?) -> Void
-
-    init(executable: URL, action: AccountAction,
-         onOutput: @escaping @MainActor (String) -> Void,
-         onEcho: @escaping @MainActor (Bool) -> Void,
-         onFinish: @escaping @MainActor (Int32?, String?) -> Void) throws {
-        self.onOutput = onOutput
-        self.onEcho = onEcho
-        self.onFinish = onFinish
-        try KeybaseExecutable.validate(executable)
-        let result = withCStringArray(ProcessRunner.environment.map { "\($0.key)=\($0.value)" }) { env in
-            executable.path.withCString { kb_spawn_account($0, action.rawValue, env, &pid, &fd) }
-        }
-        guard result == 0 else { throw ProcessRunnerError.launchFailed }
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        // The timer owns this session until finish() cancels it and breaks the
-        // cycle. Closing a window therefore still waits for CLI cancellation.
-        timer.setEventHandler { self.tick() }
-        timer.schedule(deadline: .now(), repeating: .milliseconds(30))
-        self.timer = timer
-        timer.resume()
-    }
-
-    func send(_ data: Data) {
-        queue.async {
-            guard self.pid > 0, self.stoppingAt == nil else { return }
-            guard self.pending.count + data.count <= 4096 else {
-                self.finish(status: nil, error: "Too much pending account input.", kill: true)
-                return
-            }
-            self.pending.append(data)
-            self.flushInput()
-        }
-    }
-
-    func cancel() {
-        queue.async {
-            guard self.pid > 0, self.stoppingAt == nil else { return }
-            self.pending.resetBytes(in: self.pending.startIndex..<self.pending.endIndex)
-            self.pending.removeAll(keepingCapacity: false)
-            // SIGINT allows the official CLI to cancel its RPC on the service.
-            kb_process_interrupt(self.pid)
-            self.stoppingAt = .now() + 6
-        }
-    }
-
-    func shutdown() {
-        queue.sync {
-            self.finish(status: nil, error: nil, kill: true)
-        }
-    }
-
-    private func flushInput() {
-        guard !pending.isEmpty else { return }
-        guard kb_terminal_disable_echo(fd) == 0 else {
-            finish(status: nil, error: "Keybase account input could not be kept private.", kill: true)
-            return
-        }
-        let count = pending.withUnsafeBytes { write(fd, $0.baseAddress!, $0.count) }
-        if count > 0 {
-            pending.resetBytes(in: pending.startIndex..<(pending.startIndex + count))
-            pending.removeFirst(count)
-        } else if count < 0 && errno != EINTR && errno != EAGAIN {
-            finish(status: nil, error: "The Keybase account input closed.", kill: true)
-        }
-    }
-
-    private func tick() {
-        guard pid > 0 else { return }
-        if DispatchTime.now() >= deadline {
-            finish(status: nil, error: "The account flow expired after 30 minutes. Open it again to continue.", kill: true)
-            return
-        }
-        if let stoppingAt, DispatchTime.now() >= stoppingAt {
-            finish(status: nil, error: "Account flow cancelled.", kill: true)
-            return
-        }
-        var buffer = [UInt8](repeating: 0, count: 8192)
-        for _ in 0..<16 {
-            let count = read(fd, &buffer, buffer.count)
-            guard count > 0 else { break }
-            outputCount += count
-            guard outputCount <= 512 * 1024 else {
-                finish(status: nil, error: "The account flow exceeded the output safety limit.", kill: true)
-                return
-            }
-            let safe = filter.consume(Data(buffer.prefix(count)))
-            DispatchQueue.main.async { self.onOutput(safe) }
-        }
-        let echo = kb_terminal_echo_enabled(fd) != 0
-        if echo != lastEcho {
-            lastEcho = echo
-            DispatchQueue.main.async { self.onEcho(echo) }
-        }
-        flushInput()
-        guard pid > 0 else { return }
-        var status: Int32 = 0
-        let state = kb_process_poll(pid, &status)
-        if state != 0 {
-            // Read the final prompt bytes after exit; no EOF dependency on a
-            // child or service accidentally inheriting a terminal descriptor.
-            for _ in 0..<16 {
-                let count = read(fd, &buffer, buffer.count)
-                guard count > 0 else { break }
-                outputCount += count
-                guard outputCount <= 512 * 1024 else { break }
-                let safe = filter.consume(Data(buffer.prefix(count)))
-                DispatchQueue.main.async { self.onOutput(safe) }
-            }
-            finish(status: state > 0 ? status : nil,
-                   error: state < 0 ? "The Keybase account process ended unexpectedly." : nil, kill: false)
-        }
-    }
-
-    private func finish(status: Int32?, error: String?, kill: Bool) {
-        guard pid > 0 else { return }
-        if kill { kb_process_kill(pid); kb_process_reap(pid) }
-        pid = 0
-        close(fd); fd = -1
-        pending.resetBytes(in: pending.startIndex..<pending.endIndex)
-        pending.removeAll(keepingCapacity: false)
-        timer?.setEventHandler {}
-        timer?.cancel()
-        timer = nil
-        DispatchQueue.main.async { self.onFinish(status, error) }
     }
 }

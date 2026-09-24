@@ -18,9 +18,10 @@ if CommandLine.arguments.contains("--self-check") {
                 guard editor.string.utf8.allSatisfy({ $0 < 128 }) else { throw CheckError.editor }
             }
             let executable = try KeybaseExecutable.locate()
-            let output = try await ProcessRunner.run(executable: executable, arguments: ["version"], timeout: 20, outputLimit: 4096)
+            let output = try await ProcessRunner.run(executable: executable, arguments: ["--version"], timeout: 20, outputLimit: 4096)
             guard output.status == 0 else { throw CheckError.executable }
-            print("PASS: bundled emoji mapping; native editor ASCII boundary; official Keybase signature; bounded process execution.")
+            let verification = KeybaseExecutable.isBundled(executable) ? "bundled backend signature and integrity" : "official Keybase signature"
+            print("PASS: bundled emoji mapping; native editor ASCII boundary; \(verification); bounded process execution.")
             print(ASCIIText.sanitize(String(decoding: output.stdout, as: UTF8.self)))
             exit(0)
         } catch {

@@ -2,81 +2,95 @@
 
 ## Aim and trust boundary
 
-Reduce the client surface exposed to untrusted messages while preserving the
-official Keybase identity and cryptographic protocol. This code is new and has
-not been independently audited. No claim of RCE immunity or prevention of every
-account takeover is made.
+Reduce the code and interactions reachable from untrusted messages while keeping
+Keybase's official identity and cryptographic protocol. This is new, unaudited
+code. ASCII rendering does not guarantee RCE immunity or prevent every account
+compromise.
 
-The native app trusts macOS, the installed signed Keybase executable, and the
-official Keybase service. The service retains its own protocol parsers, network
-connections, local caches, key storage, and background features. The frontend is
-not App Sandbox isolated: it needs access to the user's Keybase socket and to
-launch the official executable. Hardened runtime alone is not a sandbox.
+The native app trusts macOS and a backend built from the pinned official source
+plus the checked-in minimalist patch. It verifies the signed app, its current
+code identity, the sealed manifest, the helper signature, and the helper's
+SHA-256 before launch. A signed bundle marker prevents fallback if its helper or
+manifest disappears. No PATH lookup or user-configurable executable is exposed.
+A locally ad-hoc-signed build establishes integrity, not a publisher identity;
+public distribution still needs Developer ID signing and notarization.
 
-## Enforced by this frontend
+The backend uses separate `keybase-minimalist` configuration, cache, runtime,
+socket, and Keychain service names. Its device must be provisioned through the
+official account flow. It does not copy the original application's secrets.
+The app is not App Sandbox isolated; hardened runtime alone is not a sandbox.
 
-- Only pinned-identity, validly signed Keybase executable paths are accepted.
-  PATH lookup and user-supplied executable paths are not exposed.
-- Process arguments are structured; chat bodies travel as JSON on stdin.
-  No shell interpolation or command construction from chat content.
-- Subprocess output and running time are bounded. The environment is constrained.
-- Chat API operations are a small allowlist. Private CHAT conversations only.
-  Identity verification failures stop the operation rather than being hidden.
-- All remote display text passes through the ASCII sanitizer. Known emoji map
-  to colon shortcodes; other Unicode and control characters become visible
-  escapes. Outbound text must satisfy a separate strict policy.
-- Plain AppKit text only. Rich paste and file drops are disabled. No URL opening,
-  HTML/Markdown interpretation, media decoding, notification previews or previews.
-- The frontend does not request downloads of attachment/media/custom emoji payloads. Unsupported message
-  kinds produce fixed notices. Ephemeral messages are hidden to avoid preserving
-  disappearing content across polls.
-- Slash commands and payment actions are not allowed. The official service's
-  unfurl setting must be `never` before sends. Errors fail closed; uncertain sends
-  never trigger automatic retries.
-- Password/paper-key input uses the official CLI's PTY flow. The UI does not
-  persist or log secrets. Native strings and OS process memory are not guaranteed
-  to be securely erased; the OS and official CLI remain in scope.
-- Message history and drafts exist only in app memory. Keybase service storage,
-  OS swap, clipboard contents explicitly copied by the user, and system crash
-  handling are outside that guarantee.
+## Enforced boundaries
 
-## Limits requiring further work
+- Structured subprocess arguments and JSON stdin; no shell invocation with user
+  content. Bounded output, timeouts, cancellation, process-group ownership, and
+  a constrained child environment. App exit prevents new child launches.
+- Private CHAT conversations and identity checks before sends. Unexpected
+  identities, malformed replies, and uncertain send results fail closed.
+- Plain AppKit text only, with rich paste, file drops, link handling, text-system
+  data detection, and Writing Tools disabled. External displayed strings pass
+  through the ASCII sanitizer. Outbound text has a separate strict limit.
+- Unsupported incoming content receives fixed notices. The UI requests no
+  attachment downloads and hides ephemeral content. No message logs or on-disk
+  frontend chat/draft database are created.
+- A compile-time backend policy rejects non-text user posts and typed rich
+  payloads before service callbacks. The lower sender also checks the verified
+  conversation and queued messages. Necessary internal conversation-control
+  messages remain available.
+- The backend bypasses slash-command handling, payment parsing, emoji harvesting,
+  reply/mention decoration, unfurls, live location and rich notifications. These
+  strings remain inert text. RPC registration excludes attachment, wallet,
+  filesystem, search, bot and other optional interfaces.
+- Optional background components use inert implementations. Previews always
+  report NEVER and cannot be enabled through settings. This does not write the
+  account's shared preview preference.
+- Native media preview implementations and the preview image/GIF/ICO decoder
+  source are excluded from the minimalist build. Tests reject preview requests
+  before consuming their input.
+- Password and paper-key responses use the official CLI's interactive terminal
+  flow, with masked input when terminal echo is disabled. App and CLI process
+  memory are not guaranteed to be securely erased.
 
-Removing frontend renderers does not remove unused code from the official Go
-service or prove that its parsers are safe. Its own unfurl/background behaviors
-must be reviewed independently; the shared setting can also be changed by another
-client. There is no transactional per-message unfurl disable in the JSON API.
+## Remaining surface and acceptance
 
-An already-compromised same-user process, hostile OS, stolen recovery secret,
-malicious trusted update or official backend vulnerability is not neutralized
-by ASCII rendering. ASCII itself can contain malicious instructions or misleading
-URLs; it is not a guarantee of trustworthy content.
+The backend still parses official encrypted protocol and typed message metadata,
+including metadata for unsupported attachment kinds, to preserve authentication
+and message-chain verification. Not every unused pure-Go dependency has been
+removed. Official networking, caches, key storage, and key-maintenance operations
+remain. The local RPC account interfaces retain official login/provisioning
+behavior through narrow entry points; their internal engines remain substantial. See
+[backend minimization](docs/BACKEND-MINIMIZATION.md) for exact changes and limits.
 
-The official service's `never` unfurl mode still exempts Giphy and Keybase maps
-links. Outgoing special domains and non-stock emoji aliases are rejected to
-avoid those known paths. Previously queued unfurls can still run, and another
-client can change the shared preference between this app's check and send.
-The daemon also starts search, bot, coinflip and location components. None of
-these backend libraries or tasks has been removed by this frontend. See the
-pinned source evidence in [UPSTREAM.md](docs/UPSTREAM.md).
+This design does not protect against an already-compromised same-user process,
+hostile OS, stolen recovery secret, malicious trusted update, or vulnerabilities
+in retained code. OS swap, user-copied clipboard text and crash handling are
+outside the frontend's in-memory history guarantee.
 
-The app checks the active account around reads and before sends, clears state
-when it observes a change, and validates conversation identity before sending.
-The CLI API provides no atomic expected-account guard spanning separate calls;
-avoid switching the shared service's account while this app is sending.
+The app checks the account around reads and before sends and clears stale state
+when it changes. Separate CLI requests have no atomic expected-account guard;
+do not switch that backend's account during an in-flight send. Separation from
+the original service reduces accidental account interference but is not a
+security boundary against malicious software running as the same user.
 
-The account UI carries the official interactive flow but does not claim to
-implement every administrative CLI feature. Live device provisioning, account
-creation and messaging must be verified by the account owner before relying on
-this as a daily client. Source tests cannot substitute for that acceptance.
+Live provisioning, DM/group/team read and send, and account switching remain
+owner-operated acceptance requirements. Source tests cannot substitute for these
+server/device interactions. Before broad use: independent review, dependency
+review, signed/notarized releases and a maintained upstream update process.
 
-Before broader deployment: independent review of process and PTY boundaries,
-live compatibility testing, dependency review of the official backend, signed
-and notarized releases, and a maintained update process are required.
+## Developer compatibility mode
+
+An unpackaged developer run can use the installed full official CLI, validated
+against Keybase's code-signing identity. That mode retains the full service's
+media/background features and shared account state. The UI distinguishes it.
+It rechecks the shared `never` preview preference before sends and blocks slash
+commands, custom emoji names, and known preview-exception domains. Another client
+can change that setting and pre-existing queued work can still run; those
+restrictions are not equivalent to the bundled policy. A packaged build with
+missing or invalid backend resources never downgrades into compatibility mode.
 
 ## Reporting
 
 Report reproducible non-sensitive defects through repository issues. Do not post
-private messages, account keys, paper keys, passwords, tokens, or exploitable
-vulnerability details publicly. Coordinate a private disclosure channel with the
-repository owner before sending sensitive reports.
+private chats, credentials, keys, tokens, or exploitable vulnerability details
+publicly. Coordinate a private disclosure channel with the repository owner
+before sending sensitive reports.

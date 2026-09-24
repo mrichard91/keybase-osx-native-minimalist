@@ -7,10 +7,20 @@ permissions:
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.27.1'
+          cache: false
       - name: Test the protocol and security boundaries
         run: bash scripts/test.sh
+      - name: Test the patched official backend
+        run: bash scripts/test-backend.sh
       - name: Build and verify the native application
         run: bash scripts/build-app.sh
+      - name: Check isolated logged-out service startup
+        run: python3 scripts/smoke-backend.py
+      - name: Check packaged resources and backend trust
+        run: '"build/Keybase Minimal.app/Contents/MacOS/KeybaseMinimal" --self-check'
