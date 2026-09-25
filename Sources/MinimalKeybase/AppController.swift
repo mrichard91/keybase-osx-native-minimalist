@@ -503,7 +503,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSTextViewDelegate {
         window.titleLabel.stringValue = "# engineering"
         window.subtitleLabel.stringValue = "PRIVATE  /  TEAM CHANNEL  /  TEXT ONLY"
         window.accountLabel.stringValue = "@demo / OFFLINE PREVIEW"
-        window.transcript.string = "Sep 24 09:41  alex\nThe smallest useful surface: direct messages, groups, and plain text.\n\nSep 24 09:42  sam\nKeep the familiar account. Leave the distractions behind. :+1:\n\nSep 24 09:43  alex\nhttps://keybase.io stays plain text here. No preview, no browser.\n\nSep 24 09:44  system\n[Attachment omitted]\n\nSep 24 09:46  sam\nLooks good. Back to the conversation. :coffee:\n"
+        window.transcript.string = "2026-09-24 09:41  alex\nThe smallest useful surface: direct messages, groups, and plain text.\n\n2026-09-24 09:42  sam\nKeep the familiar account. Leave the distractions behind. :+1:\n\n2026-09-24 09:43  alex\nhttps://keybase.io stays plain text here. No preview, no browser.\n\n2026-09-24 09:44  system\n[Attachment omitted]\n\n2026-09-24 09:46  sam\nLooks good. Back to the conversation. :coffee:\n"
         status("Offline design preview. No account or network access.")
         for button in [window.connectButton, window.startButton, window.loginButton, window.refreshButton] { button.isEnabled = false }
     }

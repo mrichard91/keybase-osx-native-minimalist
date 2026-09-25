@@ -158,7 +158,7 @@ class ChatWindow: NSWindow, NSTableViewDataSource, NSTableViewDelegate {
         let output = NSMutableAttributedString()
         let mono = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         let paragraph = NSMutableParagraphStyle(); paragraph.lineSpacing = 4
-        let dateFormatter = DateFormatter(); dateFormatter.locale = Locale(identifier: "en_US_POSIX"); dateFormatter.dateFormat = "MMM dd HH:mm"
+        let dateFormatter = DateFormatter(); dateFormatter.locale = Locale(identifier: "en_US_POSIX"); dateFormatter.dateFormat = "yyyy-MM-dd HH:mm"
         for message in messages {
             let date = message.timestamp.map { dateFormatter.string(from: $0) } ?? "--:--"
             let header = "\(date)  \(ASCIIText.sanitize(message.sender, limit: 120))\n"
