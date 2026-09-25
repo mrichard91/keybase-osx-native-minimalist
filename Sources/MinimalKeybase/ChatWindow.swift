@@ -154,6 +154,8 @@ class ChatWindow: NSWindow, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func showMessages(_ messages: [Message], scrollToEnd: Bool) {
+        // Establish the wrapping width before laying out a replacement page.
+        contentView?.layoutSubtreeIfNeeded()
         let oldOrigin = transcriptScroll.contentView.bounds.origin
         let output = NSMutableAttributedString()
         let mono = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -167,7 +169,19 @@ class ChatWindow: NSWindow, NSTableViewDataSource, NSTableViewDelegate {
         }
         if messages.isEmpty { output.append(NSAttributedString(string: "No messages yet. Say hello.", attributes: [.font: mono, .foregroundColor: NSColor.secondaryLabelColor])) }
         transcript.textStorage?.setAttributedString(output)
-        if scrollToEnd { transcript.scrollToEndOfDocument(nil) }
-        else { transcriptScroll.contentView.scroll(to: oldOrigin); transcriptScroll.reflectScrolledClipView(transcriptScroll.contentView) }
+        // AppKit may defer text layout after replacement. Scrolling its old
+        // document height can leave the viewport at the beginning of a thread.
+        if let container = transcript.textContainer {
+            transcript.layoutManager?.ensureLayout(for: container)
+        }
+        transcript.sizeToFit()
+        contentView?.layoutSubtreeIfNeeded()
+        let clip = transcriptScroll.contentView
+        var destination = clip.bounds
+        destination.origin = scrollToEnd
+            ? NSPoint(x: 0, y: max(0, transcript.frame.maxY - clip.bounds.height))
+            : oldOrigin
+        clip.scroll(to: clip.constrainBoundsRect(destination).origin)
+        transcriptScroll.reflectScrolledClipView(clip)
     }
 }
