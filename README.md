@@ -9,6 +9,19 @@ existing-account provisioning, real DM/group/team histories and a private
 self-message. Broader cross-client messaging and failure recovery still need
 acceptance before this can be described as a proven daily replacement for Electron.
 
+## Screenshots
+
+Fictional conversations shown in the offline demo, without account access.
+
+![Keybase Minimal showing the conversation sidebar, ASCII messages, emoji shortcodes, and an omitted attachment in offline demo mode](docs/screenshots/keybase-minimal-demo.jpg)
+
+<details>
+<summary>Expanded window</summary>
+
+![Expanded Keybase Minimal window showing the same fictional offline conversation](docs/screenshots/keybase-minimal-expanded.jpg)
+
+</details>
+
 ## What it includes
 
 - Native AppKit conversation list sorted by latest message, paginated history, unread indicators,
