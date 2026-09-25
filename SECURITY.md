@@ -86,9 +86,10 @@ do not switch that backend's account during an in-flight send. Separation from
 the original service reduces accidental account interference but is not a
 security boundary against malicious software running as the same user.
 
-Live provisioning, DM/group/team read and send, and account switching remain
-owner-operated acceptance requirements. Source tests cannot substitute for these
-server/device interactions. Before broad use: independent review, dependency
+Owner-operated checks have verified provisioning, DM/group/team history reads
+and one private self-message. Broader cross-client sends, mixed-content handling,
+failure recovery and account switching remain acceptance requirements. Source
+tests cannot substitute for these server/device interactions. Before broad use: independent review, dependency
 review, signed/notarized releases and a maintained upstream update process.
 
 ## Developer compatibility mode

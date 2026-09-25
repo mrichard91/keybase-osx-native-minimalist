@@ -4,9 +4,10 @@ A native macOS client for Keybase direct messages, multi-person groups, and team
 channels. An IRC-style interface, plain ASCII text, and no rich-content rendering.
 
 **Development software; not independently security-audited.** The app builds and
-bundles a reduced official Keybase Go backend. Existing-account provisioning and
-cross-client messaging still need live owner-operated acceptance before this can
-be described as a proven replacement for the Electron app.
+bundles a reduced official Keybase Go backend. Owner-operated checks have verified
+existing-account provisioning, real DM/group/team histories and a private
+self-message. Broader cross-client messaging and failure recovery still need
+acceptance before this can be described as a proven daily replacement for Electron.
 
 ## What it includes
 

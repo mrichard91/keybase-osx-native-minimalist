@@ -134,6 +134,49 @@ final class KeybaseClientTests: XCTestCase {
         XCTAssertEqual(args[1], KeybaseClient.arguments + ["chat", "api"])
     }
 
+    func testReadFollowsOfficialPaginationWithOmittedLast() async throws {
+        // chat1.Pagination.Last is json:"last,omitempty": real nonfinal pages
+        // omit it. Exercise the serialized reply and subsequent read request.
+        let commands = try FakeCommands([
+            listResult([conversation()]),
+            ["messages": [rawMessage(id: 100)], "pagination": ["num": 100, "next": "b2xk"]],
+            ["messages": [rawMessage(id: 1)], "pagination": ["num": 100, "next": "ZW5k", "last": true]],
+        ])
+        let service = client(commands)
+        let latest = try await service.read(conversationID: testConversationID)
+        XCTAssertEqual(latest.messages.map(\.id), ["100"])
+        XCTAssertTrue(latest.hasMore)
+        XCTAssertEqual(latest.next, "b2xk")
+        let earlier = try await service.read(conversationID: testConversationID, next: latest.next)
+        XCTAssertEqual(earlier.messages.map(\.id), ["1"])
+        XCTAssertFalse(earlier.hasMore)
+        let requests = try await commands.requests()
+        let options = (requests[2]["params"] as! [String: Any])["options"] as! [String: Any]
+        XCTAssertEqual((options["pagination"] as? [String: Any])?["next"] as? String, "b2xk")
+    }
+
+    func testPaginationRequiresBothNonfinalStatusAndNextToken() throws {
+        for (pagination, hasMore) in [
+            (["last": false, "next": "b2xk"] as [String: Any], true),
+            (["last": true, "next": "b2xk"], false),
+            (["num": 100], false),
+            (["last": false, "next": ""], false),
+        ] {
+            let data = try reply(["messages": [], "pagination": pagination])
+            let page = try ChatDecoder.page(from: ChatDecoder.result(from: data), conversationID: testConversationID)
+            XCTAssertEqual(page.hasMore, hasMore)
+        }
+    }
+
+    func testPaginationRejectsNonBooleanLastValues() throws {
+        for value in [0, 1, -1, 1.5, "false", "true", NSNull(), [], [:]] as [Any] {
+            let data = try reply(["messages": [], "pagination": ["next": "b2xk", "last": value]])
+            XCTAssertThrowsError(try ChatDecoder.page(from: ChatDecoder.result(from: data), conversationID: testConversationID)) {
+                XCTAssertEqual($0 as? KeybaseClientError, .invalidReply)
+            }
+        }
+    }
+
     func testSendDisablesAndVerifiesPreviewsAndNormalizesEmoji() async throws {
         let commands = try FakeCommands([listResult([conversation()]), ["mode": "always"], true,
                                         ["mode": "never"], ["id": 7, "message": "message sent"]])

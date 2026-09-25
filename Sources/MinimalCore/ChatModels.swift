@@ -209,11 +209,21 @@ enum ChatDecoder {
         var next: String?
         var hasMore = false
         if let pagination = dictionary["pagination"] as? [String: Any] {
+            // Official Go JSON omits Last when false. A present value must be
+            // a JSON Boolean; NSNumber's Bool bridge also accepts numeric 0/1.
+            var last = false
+            if let rawLast = pagination["last"] {
+                guard let value = rawLast as? NSNumber,
+                      CFGetTypeID(value) == CFBooleanGetTypeID() else {
+                    throw KeybaseClientError.invalidReply
+                }
+                last = value.boolValue
+            }
             if let token = pagination["next"] as? String, !token.isEmpty {
                 guard validPageToken(token) else { throw KeybaseClientError.invalidReply }
                 next = token
             }
-            hasMore = pagination["last"] as? Bool == false && next != nil
+            hasMore = !last && next != nil
         }
         return MessagePage(messages: messages, next: next, hasMore: hasMore)
     }

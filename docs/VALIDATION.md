@@ -4,10 +4,13 @@ Checked locally on 2026-09-24 with Apple Swift 6.4, Go 1.27.1 and macOS 27 arm64
 The backend source is official Keybase revision
 `f60f2ff97e35f2287375d95eafa7cad77d872072` plus the checked-in minimalist patch.
 
-- 72 Swift tests passed: ASCII/emoji policy, API request shapes, identity/private
+- 75 Swift tests passed: ASCII/emoji policy, API request shapes, identity/private
   conversation checks, bounded child processes, cancellation and cleanup,
   synthetic account terminals, signed-backend validation, AppKit editing, draft
   isolation, account changes, and setup/compatibility presentation.
+- Pagination fixtures use the official serialized response, where `last` is
+  omitted when false. The next-page cursor is retained in that case; numeric,
+  string and other malformed `last` values are rejected.
 - Account submission uses terminal Return (CR), matching the official raw
   terminal reader. A live username prompt exposed the earlier LF bug; it is
   covered by a mixed canonical/raw/secret-prompt fixture and an inert run of
@@ -41,6 +44,8 @@ The backend source is official Keybase revision
   packaged self-check passed for emoji resources, AppKit text input, the rebuilt
   backend signature/hash, and a configuration-free version subprocess. The
   existing app used for owner provisioning was not replaced during that session.
+  After provisioning completed, the verified app was installed at
+  `build/Keybase Minimal.app` with the old bundle retained separately.
 - 24 build-inspection fixture tests passed, including malformed policy metadata,
   forbidden direct frameworks and image-package symbols, process limits and
   notice provenance boundaries.
@@ -57,7 +62,7 @@ The backend source is official Keybase revision
   camlistore/EXIF image-decoding chain. JPEG remains through the unchanged
   official OpenPGP packet package's photo-encoding helper. The build checker now
   enforces these named symbol exclusions with bounded `/usr/bin/nm` output and
-  reports JPEG explicitly. The rebuilt helper passed inspection of 62,447
+  reports JPEG explicitly. The rebuilt helper passed inspection of 62,446
   symbols; the earlier helper containing the removed parsers was rejected.
   This does not prove all transitive system or other pure-Go parsers have been
   removed.
@@ -65,15 +70,26 @@ The backend source is official Keybase revision
   The source tripwire checks for listed frontend browser/media/shell/network
   entry points; it is a regression check, not a security audit.
 
-[GitHub Actions passed for the earlier commit `81bfc9c`](https://github.com/mrichard91/keybase-osx-native-minimalist/actions/runs/36065970337).
-That CI run predates the parser exclusions and blocking thread-reader fix; the
-checks above describe local validation of the combined changes.
+[GitHub Actions passed for backend commit `1fdaef6`](https://github.com/mrichard91/keybase-osx-native-minimalist/actions/runs/36068174170).
+That run includes the parser exclusions, blocking thread-reader fix and omitted
+follower-list worker. The pagination fix also passed the local tests above.
 
-Automated tests use no real account credentials or live chats. During owner-led
-acceptance, username submission was verified to advance to official existing-device
-selection after the CR fix. Device provisioning and authenticated DM/group/team
-interoperability remain acceptance tasks in [ACCEPTANCE.md](ACCEPTANCE.md). The
-offline crypto fixtures do not establish those server and device interactions.
+Automated regression tests use no real account credentials or live chats. In a
+separate, explicitly authorized owner session, an existing account was
+provisioned and the native app loaded its inbox. The older installed helper still
+had the dummy thread reader and displayed empty histories; installing the fixed
+helper restored real text in an existing DM, multi-person group and team channel.
+The displayed group and team transcripts contained only ASCII. Exactly one
+approved ASCII message was sent to the owner's verified private self-chat,
+read back with its confirmed message ID, and observed in the native transcript.
+No test message was sent to another person or a group.
+
+After the update, service reconnection initially timed out and recovered after
+several minutes. The cause remains unproven; startup responsiveness needs further
+validation. Live older-page navigation, cross-client group sends, incoming
+mixed-content tests, interrupted sends and account switching remain acceptance
+tasks in [ACCEPTANCE.md](ACCEPTANCE.md). The offline crypto fixtures do not
+establish those server and device interactions.
 
 The scripts use the native SwiftPM build system because this machine's default
 build backend failed to initialize. Full Xcode is selected for XCTest. Synthetic
