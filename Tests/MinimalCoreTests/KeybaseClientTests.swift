@@ -69,6 +69,42 @@ final class KeybaseClientTests: XCTestCase {
         XCTAssertEqual(try ChatDecoder.conversations(from: ["conversations": NSNull()]), [])
     }
 
+    func testInboxRecencyUsesMillisecondsWithSecondsFallbackAndStableTies() throws {
+        var older = conversation(String(repeating: "a", count: 64))
+        older["active_at"] = 1_700_000_000
+        var newest = conversation(String(repeating: "b", count: 64))
+        newest["active_at"] = 1_700_000_000
+        newest["active_at_ms"] = 1_700_000_000_900 as Int64
+        newest["unread"] = false
+        var sameTime = conversation(String(repeating: "c", count: 64), members: "team")
+        sameTime["active_at_ms"] = 1_700_000_000_900 as Int64
+        let undated = conversation(String(repeating: "d", count: 64))
+        let entries = [older, undated, sameTime, newest]
+        for input in [entries, Array(entries.reversed())] {
+            let data = try reply(listResult(input))
+            let items = try ChatDecoder.conversations(from: ChatDecoder.result(from: data))
+                .sorted(by: Conversation.mostRecentFirst)
+            XCTAssertEqual(items.map(\.id), [newest, sameTime, older, undated].map { $0["id"] as! String })
+            XCTAssertEqual(items[0].lastMessageAt!.timeIntervalSince1970, 1_700_000_000.9, accuracy: 0.0001)
+            XCTAssertEqual(items[2].lastMessageAt, Date(timeIntervalSince1970: 1_700_000_000))
+            XCTAssertNil(items[3].lastMessageAt)
+        }
+    }
+
+    func testInboxRejectsMalformedActivityTimestamps() throws {
+        for field in ["active_at", "active_at_ms"] {
+            let upperBound = field == "active_at_ms" ? 253_402_300_800_000 as Int64 : 253_402_300_800
+            for value in [true, false, "1700000000", -1, 1.5, NSNull(), [], [:], upperBound] as [Any] {
+                var entry = conversation()
+                entry[field] = value
+                let data = try reply(listResult([entry]))
+                XCTAssertThrowsError(try ChatDecoder.conversations(from: ChatDecoder.result(from: data))) {
+                    XCTAssertEqual($0 as? KeybaseClientError, .invalidReply)
+                }
+            }
+        }
+    }
+
     func testIdentityFailuresAndOfflineAreNotIgnored() throws {
         XCTAssertThrowsError(try ChatDecoder.result(from: reply(["identify_failures": [["username": "alice"]]]))) {
             XCTAssertEqual($0 as? KeybaseClientError, .identityFailure)

@@ -7,15 +7,26 @@ public struct Conversation: Identifiable, Equatable, Sendable {
     public let topic: String
     public let isTeam: Bool
     public let unread: Bool
+    public let lastMessageAt: Date?
 
     public var displayName: String { isTeam ? "\(name) #\(topic)" : name }
 
-    public init(id: String, name: String, topic: String, isTeam: Bool, unread: Bool) {
+    public init(id: String, name: String, topic: String, isTeam: Bool, unread: Bool, lastMessageAt: Date? = nil) {
         self.id = id
         self.name = ASCIIText.sanitize(name)
         self.topic = ASCIIText.sanitize(topic)
         self.isTeam = isTeam
         self.unread = unread
+        self.lastMessageAt = lastMessageAt
+    }
+
+    public static func mostRecentFirst(_ lhs: Conversation, _ rhs: Conversation) -> Bool {
+        switch (lhs.lastMessageAt, rhs.lastMessageAt) {
+        case let (left?, right?) where left != right: return left > right
+        case (_?, nil): return true
+        case (nil, _?): return false
+        default: return lhs.id < rhs.id
+        }
     }
 }
 
@@ -139,9 +150,30 @@ enum ChatDecoder {
                   let name = channel["name"] as? String, name.utf8.count <= 4096,
                   let unread = item["unread"] as? Bool else { throw KeybaseClientError.invalidReply }
             guard seen.insert(id).inserted else { throw KeybaseClientError.invalidReply }
+            // Official ConvSummary exports inbox message activity as Unix
+            // milliseconds and seconds. Keep subsecond ordering when available.
+            let lastMessageAt: Date?
+            if let milliseconds = item["active_at_ms"] {
+                lastMessageAt = try conversationDate(milliseconds, unitsPerSecond: 1_000)
+            } else if let seconds = item["active_at"] {
+                lastMessageAt = try conversationDate(seconds, unitsPerSecond: 1)
+            } else {
+                lastMessageAt = nil
+            }
             return Conversation(id: id, name: name, topic: channel["topic_name"] as? String ?? "",
-                                isTeam: channel["members_type"] as? String == "team", unread: unread)
+                                isTeam: channel["members_type"] as? String == "team", unread: unread,
+                                lastMessageAt: lastMessageAt)
         }
+    }
+
+    private static func conversationDate(_ raw: Any, unitsPerSecond: Double) throws -> Date {
+        guard let value = raw as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(),
+              value.doubleValue.isFinite, value.doubleValue >= 0,
+              value.doubleValue.rounded(.towardZero) == value.doubleValue,
+              value.doubleValue / unitsPerSecond < 253_402_300_800 else {
+            throw KeybaseClientError.invalidReply
+        }
+        return Date(timeIntervalSince1970: value.doubleValue / unitsPerSecond)
     }
 
     static func messageID(_ raw: Any?) -> UInt32? {

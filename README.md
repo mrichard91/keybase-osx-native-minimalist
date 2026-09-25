@@ -11,7 +11,7 @@ acceptance before this can be described as a proven daily replacement for Electr
 
 ## What it includes
 
-- Native AppKit conversation list, paginated history, unread indicators,
+- Native AppKit conversation list sorted by latest message, paginated history, unread indicators,
   in-memory drafts, and a plain-text composer.
 - Official Keybase account, device-provisioning, identity-verification,
   encryption, team-key, and chat protocol implementations from a pinned revision.

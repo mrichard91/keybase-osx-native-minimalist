@@ -17,6 +17,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSTextViewDelegate {
     private var nextPage: String?
     private var pageCursor: String?
     private var generation = 0
+    private var inboxRefreshGeneration = 0
     private var sessionRevision = 0
     private var sending = false
     private var connecting = false
@@ -254,34 +255,48 @@ final class AppController: NSObject, NSApplicationDelegate, NSTextViewDelegate {
     }
 
     func refreshInbox() async throws {
-        guard let client, let currentAccount = username else { return }
+        guard let client, let currentAccount = username, !Task.isCancelled else { return }
         let revision = sessionRevision
-        let account = try await client.account()
-        guard isCurrentSession(currentAccount, revision: revision) else { return }
-        guard account == currentAccount else {
-            clearSession()
-            show(UIError.accountChanged)
-            throw UIError.accountChanged
+        inboxRefreshGeneration += 1
+        let requestGeneration = inboxRefreshGeneration
+        func isCurrentRefresh() -> Bool {
+            requestGeneration == inboxRefreshGeneration && isCurrentSession(currentAccount, revision: revision)
         }
-        let items = try await client.conversations()
-        guard isCurrentSession(currentAccount, revision: revision) else { return }
-        let after = try await client.account()
-        guard isCurrentSession(currentAccount, revision: revision) else { return }
-        guard after == currentAccount else {
-            clearSession()
-            show(UIError.accountChanged)
-            throw UIError.accountChanged
-        }
-        let selectedID = selected?.id
-        window.replaceConversations(items, selectedID: selectedID)
-        if let selectedID {
-            if let current = items.first(where: { $0.id == selectedID }) {
-                selected = current
-                window.titleLabel.stringValue = current.displayName
-            } else {
-                clearConversation()
-                status("The selected conversation is no longer available. Its draft is kept until you disconnect.")
+        do {
+            let account = try await client.account()
+            guard isCurrentRefresh() else { return }
+            guard account == currentAccount else {
+                clearSession()
+                show(UIError.accountChanged)
+                throw UIError.accountChanged
             }
+            let items = try await client.conversations()
+            guard isCurrentRefresh() else { return }
+            let after = try await client.account()
+            guard isCurrentRefresh() else { return }
+            guard after == currentAccount else {
+                clearSession()
+                show(UIError.accountChanged)
+                throw UIError.accountChanged
+            }
+            let selectedID = selected?.id
+            window.replaceConversations(items, selectedID: selectedID)
+            if let selectedID {
+                if let current = items.first(where: { $0.id == selectedID }) {
+                    selected = current
+                    window.titleLabel.stringValue = current.displayName
+                } else {
+                    clearConversation()
+                    status("The selected conversation is no longer available. Its draft is kept until you disconnect.")
+                }
+            }
+        } catch UIError.accountChanged {
+            // This current request deliberately cleared the session above.
+            throw UIError.accountChanged
+        } catch {
+            // A superseded poll must not overwrite newer success with an error.
+            guard isCurrentRefresh() else { return }
+            throw error
         }
     }
 
@@ -439,10 +454,25 @@ final class AppController: NSObject, NSApplicationDelegate, NSTextViewDelegate {
                 if self.selected?.id == selected.id {
                     if window.composer.string == original { window.composer.replaceDraft("") }
                     generation += 1; loadTask?.cancel(); pageCursor = nil
+                }
+                // The message is already confirmed. Refresh recency before the
+                // thread, and never turn a failed inbox refresh into an ambiguous
+                // send error that could encourage sending the same text twice.
+                var inboxRefreshFailure: String?
+                do { try await refreshInbox() }
+                catch {
+                    guard isCurrentSession(account, revision: revision) else { return }
+                    inboxRefreshFailure = error.localizedDescription
+                }
+                guard isCurrentSession(account, revision: revision) else { return }
+                if self.selected?.id == selected.id {
                     await loadPage(scrollToEnd: true)
                 }
                 guard isCurrentSession(account, revision: revision) else { return }
-                status("Sent to " + selected.displayName + ".")
+                let confirmation = "Sent to " + selected.displayName + "."
+                if let inboxRefreshFailure {
+                    status(confirmation + " Inbox refresh failed. Refresh to update the conversation order. " + inboxRefreshFailure)
+                } else { status(confirmation) }
             } catch {
                 guard isCurrentSession(account, revision: revision) else { return }
                 status("Send was not confirmed. Check the conversation before retrying; your draft has been kept. " + error.localizedDescription)

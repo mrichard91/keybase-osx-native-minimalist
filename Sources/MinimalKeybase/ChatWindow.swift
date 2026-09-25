@@ -125,9 +125,9 @@ class ChatWindow: NSWindow, NSTableViewDataSource, NSTableViewDelegate {
         // without treating an intermediate row index as a user selection.
         restoringSelection = true
         defer { restoringSelection = false }
-        conversations = items
+        conversations = items.sorted(by: Conversation.mostRecentFirst)
         sidebar.reloadData()
-        if let row = items.firstIndex(where: { $0.id == selectedID }) {
+        if let row = conversations.firstIndex(where: { $0.id == selectedID }) {
             sidebar.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         } else { sidebar.deselectAll(nil) }
     }
