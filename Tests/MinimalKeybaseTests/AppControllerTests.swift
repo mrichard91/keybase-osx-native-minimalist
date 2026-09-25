@@ -5,10 +5,15 @@ import MinimalCore
 
 @MainActor
 private final class VisibleChatWindow: ChatWindow {
-    var tailVisible = true
+    var tailVisible: Bool? = true
     var readingFocus = true
+    var renderedScrollRequests: [Bool] = []
     override var hasReadingFocus: Bool { readingFocus }
-    override var isTranscriptAtEnd: Bool { tailVisible }
+    override var isTranscriptAtEnd: Bool { tailVisible ?? super.isTranscriptAtEnd }
+    override func showMessages(_ messages: [Message], scrollToEnd: Bool) {
+        renderedScrollRequests.append(scrollToEnd)
+        super.showMessages(messages, scrollToEnd: scrollToEnd)
+    }
 }
 
 private actor MemoryChat: ChatService {
@@ -32,6 +37,8 @@ private actor MemoryChat: ChatService {
     var suspendNext = false
     var readStarted: (@Sendable () -> Void)?
     var pendingRead: CheckedContinuation<MessagePage, Error>?
+    var capturedRead: MessagePage?
+    var readCursors: [String?] = []
 
     init() { inbox = [first, second] }
     func account() throws -> String {
@@ -53,8 +60,10 @@ private actor MemoryChat: ChatService {
         return inbox
     }
     func read(conversationID: String, next: String?) async throws -> MessagePage {
+        readCursors.append(next)
         if suspendNext {
             suspendNext = false
+            capturedRead = page
             return try await withCheckedThrowingContinuation { continuation in
                 pendingRead = continuation
                 readStarted?()
@@ -90,7 +99,11 @@ private actor MemoryChat: ChatService {
     func setPrepareFailure(_ fails: Bool) { prepareFails = fails }
     func setAccountFailure(_ fails: Bool) { accountFails = fails }
     func pauseRead(_ notify: @escaping @Sendable () -> Void) { suspendNext = true; readStarted = notify }
-    func finishRead() { pendingRead?.resume(returning: page); pendingRead = nil }
+    func finishRead() {
+        pendingRead?.resume(returning: capturedRead ?? page)
+        pendingRead = nil
+        capturedRead = nil
+    }
 }
 
 @MainActor
@@ -303,10 +316,117 @@ final class AppControllerTests: XCTestCase {
         XCTAssertEqual(window.accountLabel.stringValue, "@alice")
     }
 
+    func testOverlappingBackgroundReadCannotRepaintThreadAfterConfirmedSend() async throws {
+        let (window, chat, controller) = context()
+        defer { controller.clearSession(); window.close() }
+        window.tailVisible = nil // Use AppKit's actual scroll geometry here.
+        window.contentView?.layoutSubtreeIfNeeded()
+        await controller.connect()
+        controller.select(chat.first, load: false)
+        await controller.loadPage(scrollToEnd: true)
+        let inboxStarted = expectation(description: "Confirmed send is refreshing inbox")
+        await chat.pauseInbox { inboxStarted.fulfill() }
+        window.composer.replaceDraft("Inert outgoing fixture")
+        controller.sendClicked()
+        await fulfillment(of: [inboxStarted], timeout: 2)
+
+        // Polling can begin while the send's inbox request is in flight. Both
+        // page requests then belong to the same conversation generation.
+        let readStarted = expectation(description: "Background read captured old thread")
+        await chat.pauseRead { readStarted.fulfill() }
+        let stale = Task { await controller.loadPage(scrollToEnd: false) }
+        await fulfillment(of: [readStarted], timeout: 2)
+        let longThread = (1...100).map { id in
+            Message(id: String(id), sender: "alice", body: "Newest confirmed fixture \(id): " + String(repeating: "Long synthetic plain text wraps across the window. ", count: 5), timestamp: nil, isNotice: false)
+        }
+        await chat.setPage(MessagePage(messages: longThread, next: nil, hasMore: false))
+        await chat.finishInbox()
+        try await waitForSendCompletion(window)
+        try await settleTranscript(window)
+        XCTAssertTrue(window.transcript.string.contains("Newest confirmed fixture"))
+        XCTAssertTrue(window.isTranscriptAtEnd)
+        let endOrigin = window.transcriptScroll.contentView.bounds.origin.y
+        XCTAssertGreaterThan(endOrigin, window.transcriptScroll.contentView.bounds.height)
+        let renderCount = window.renderedScrollRequests.count
+        window.composer.replaceDraft("Next unsent draft")
+        await chat.finishRead()
+        await stale.value
+        try await settleTranscript(window)
+        XCTAssertTrue(window.transcript.string.contains("Newest confirmed fixture"))
+        XCTAssertEqual(window.renderedScrollRequests.count, renderCount)
+        XCTAssertEqual(window.composer.string, "Next unsent draft")
+        XCTAssertTrue(window.statusLabel.stringValue.hasPrefix("Sent to "))
+        XCTAssertTrue(window.isTranscriptAtEnd)
+        XCTAssertEqual(window.transcriptScroll.contentView.bounds.origin.y, endOrigin, accuracy: 1)
+    }
+
+    func testNewerBackgroundReadKeepsPendingExplicitTailRequestOnlyOnce() async throws {
+        let (window, chat, controller) = context()
+        defer { controller.clearSession(); window.close() }
+        await controller.connect()
+        controller.select(chat.first, load: false)
+        window.tailVisible = false
+        let started = expectation(description: "Explicit tail read suspended")
+        await chat.pauseRead { started.fulfill() }
+        let explicit = Task { await controller.loadPage(scrollToEnd: true) }
+        await fulfillment(of: [started], timeout: 2)
+        await chat.setPage(MessagePage(messages: [Message(id: "2", sender: "bob", body: "Newer overlapping fixture", timestamp: nil, isNotice: false)], next: nil, hasMore: false))
+        await controller.loadPage(scrollToEnd: false)
+        XCTAssertEqual(window.renderedScrollRequests, [true])
+        await chat.finishRead()
+        await explicit.value
+        XCTAssertTrue(window.transcript.string.contains("Newer overlapping fixture"))
+        XCTAssertEqual(window.renderedScrollRequests, [true])
+
+        await chat.setPage(MessagePage(messages: [Message(id: "3", sender: "bob", body: "Later ordinary fixture", timestamp: nil, isNotice: false)], next: nil, hasMore: false))
+        await controller.loadPage(scrollToEnd: false)
+        XCTAssertEqual(window.renderedScrollRequests, [true, false])
+    }
+
+    func testSendInboxCompletionRespectsEarlierPageChosenWhileWaiting() async throws {
+        let (window, chat, controller) = context()
+        defer { controller.clearSession(); window.close() }
+        await chat.setPage(MessagePage(messages: [Message(id: "100", sender: "bob", body: "Latest fixture", timestamp: nil, isNotice: false)], next: "earlier-token", hasMore: true))
+        await controller.connect()
+        controller.select(chat.first, load: false)
+        await controller.loadPage(scrollToEnd: true)
+        let started = expectation(description: "Send is awaiting inbox refresh")
+        await chat.pauseInbox { started.fulfill() }
+        window.composer.replaceDraft("Inert outgoing fixture")
+        controller.sendClicked()
+        await fulfillment(of: [started], timeout: 2)
+
+        await chat.setPage(MessagePage(messages: [Message(id: "50", sender: "bob", body: "Earlier page chosen by user", timestamp: nil, isNotice: false)], next: nil, hasMore: false))
+        window.tailVisible = false
+        XCTAssertTrue(window.olderButton.isEnabled)
+        window.olderButton.performClick(nil)
+        for _ in 0..<200 {
+            if window.statusLabel.stringValue.hasPrefix("Viewing earlier messages") { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertTrue(window.transcript.string.contains("Earlier page chosen by user"))
+        XCTAssertEqual(window.renderedScrollRequests, [true, false])
+        await chat.finishInbox()
+        try await waitForSendCompletion(window)
+        XCTAssertTrue(window.transcript.string.contains("Earlier page chosen by user"))
+        XCTAssertEqual(window.renderedScrollRequests, [true, false])
+        let cursors = await chat.readCursors
+        XCTAssertEqual(cursors, [nil, "earlier-token"])
+    }
+
     private func withRecency(_ conversation: Conversation, _ seconds: TimeInterval) -> Conversation {
         Conversation(id: conversation.id, name: conversation.name, topic: conversation.topic,
                      isTeam: conversation.isTeam, unread: conversation.unread,
                      lastMessageAt: Date(timeIntervalSince1970: seconds))
+    }
+
+    private func settleTranscript(_ window: ChatWindow) async throws {
+        window.contentView?.layoutSubtreeIfNeeded()
+        if let container = window.transcript.textContainer {
+            window.transcript.layoutManager?.ensureLayout(for: container)
+        }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        window.contentView?.layoutSubtreeIfNeeded()
     }
 
     private func waitForSendCompletion(_ window: ChatWindow) async throws {

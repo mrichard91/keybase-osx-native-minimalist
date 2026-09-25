@@ -17,6 +17,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSTextViewDelegate {
     private var nextPage: String?
     private var pageCursor: String?
     private var generation = 0
+    private var pageRequestGeneration = 0
+    private var scrollToEndGeneration: Int?
     private var inboxRefreshGeneration = 0
     private var sessionRevision = 0
     private var sending = false
@@ -349,48 +351,59 @@ final class AppController: NSObject, NSApplicationDelegate, NSTextViewDelegate {
     }
 
     func loadPage(scrollToEnd: Bool) async {
-        guard let selected, let client, let account = username else { return }
+        guard let selected, let client, let account = username, !Task.isCancelled else { return }
         let requestGeneration = generation
+        pageRequestGeneration += 1
+        let requestID = pageRequestGeneration
+        // Keep an explicit tail request through overlapping polls for this
+        // conversation/page. Navigation changes generation and expires it.
+        if scrollToEnd { scrollToEndGeneration = requestGeneration }
         let revision = sessionRevision
         let cursor = pageCursor
+        func isCurrentPage() -> Bool {
+            requestID == pageRequestGeneration && requestGeneration == generation &&
+                isCurrentSession(account, revision: revision)
+        }
         do {
             let before = try await client.account()
-            guard isCurrentSession(account, revision: revision), requestGeneration == generation else { return }
+            guard isCurrentPage() else { return }
             guard before == account else {
                 clearSession(); show(UIError.accountChanged); return
             }
             let page = try await client.read(conversationID: selected.id, next: cursor)
-            guard isCurrentSession(account, revision: revision), requestGeneration == generation else { return }
+            guard isCurrentPage() else { return }
             let after = try await client.account()
-            guard isCurrentSession(account, revision: revision), requestGeneration == generation else { return }
+            guard isCurrentPage() else { return }
             guard after == account else {
                 clearSession(); show(UIError.accountChanged); return
             }
             nextPage = page.hasMore ? page.next : nil
             window.olderButton.isEnabled = nextPage != nil
             let atEnd = window.isTranscriptAtEnd
-            if displayedMessages != page.messages || scrollToEnd {
-                window.showMessages(page.messages, scrollToEnd: scrollToEnd || atEnd)
+            let requestedTail = scrollToEndGeneration == requestGeneration
+            if displayedMessages != page.messages || requestedTail {
+                window.showMessages(page.messages, scrollToEnd: requestedTail || atEnd)
                 displayedMessages = page.messages
             }
+            if requestedTail { scrollToEndGeneration = nil }
             conversationReady = true
             updateSendState()
             status(cursor == nil ? "Connected. Emoji are displayed and sent as :shortcodes:." : "Viewing earlier messages. Refresh returns to the latest page.")
-            if cursor == nil, window.hasReadingFocus, scrollToEnd || atEnd,
+            if cursor == nil, window.hasReadingFocus, requestedTail || atEnd,
                let last = page.messages.last(where: { UInt32($0.id) != nil }), lastMarked != selected.id + ":" + last.id {
                 do {
                     try await client.markRead(conversationID: selected.id, messageID: last.id)
-                    guard isCurrentSession(account, revision: revision), requestGeneration == generation else { return }
+                    guard isCurrentPage() else { return }
                     lastMarked = selected.id + ":" + last.id
                 } catch {
-                    guard isCurrentSession(account, revision: revision), requestGeneration == generation else { return }
+                    guard isCurrentPage() else { return }
                     // A receipt failure cannot make already verified text unreadable.
                     conversationReady = false; updateSendState()
                     status("Messages loaded, but the read receipt was not confirmed. Refresh before sending. " + error.localizedDescription)
                 }
             }
         } catch {
-            guard isCurrentSession(account, revision: revision), requestGeneration == generation else { return }
+            guard isCurrentPage() else { return }
             conversationReady = false
             displayedMessages = []
             window.transcript.string = "Messages are unavailable. Reconnect or refresh after resolving the error below."
@@ -455,6 +468,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSTextViewDelegate {
                     if window.composer.string == original { window.composer.replaceDraft("") }
                     generation += 1; loadTask?.cancel(); pageCursor = nil
                 }
+                let sentViewGeneration = generation
                 // The message is already confirmed. Refresh recency before the
                 // thread, and never turn a failed inbox refresh into an ambiguous
                 // send error that could encourage sending the same text twice.
@@ -465,7 +479,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSTextViewDelegate {
                     inboxRefreshFailure = error.localizedDescription
                 }
                 guard isCurrentSession(account, revision: revision) else { return }
-                if self.selected?.id == selected.id {
+                // Respect Earlier or away-and-back navigation while the inbox
+                // refresh awaited its reply, even if the conversation ID matches.
+                if self.selected?.id == selected.id, generation == sentViewGeneration {
                     await loadPage(scrollToEnd: true)
                 }
                 guard isCurrentSession(account, revision: revision) else { return }
